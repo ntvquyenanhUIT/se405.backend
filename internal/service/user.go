@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -22,6 +23,18 @@ func NewUserService(repo repository.UserRepository) *UserService {
 
 // Register creates a new user account with optional avatar metadata.
 func (s *UserService) Register(ctx context.Context, req *model.RegisterRequest) (*model.User, error) {
+	if strings.TrimSpace(req.Username) == "" {
+		return nil, fmt.Errorf("username is required")
+	}
+
+	if strings.TrimSpace(req.Password) == "" {
+		return nil, fmt.Errorf("password is required")
+	}
+
+	if (req.AvatarURL == nil) != (req.AvatarKey == nil) {
+		return nil, fmt.Errorf("avatar_url and avatar_key must both be provided or both omitted")
+	}
+
 	// Check if username already exists
 	exists, err := s.repo.ExistsByUsername(ctx, req.Username)
 	if err != nil {

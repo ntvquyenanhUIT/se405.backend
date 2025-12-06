@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,10 @@ type mockUserRepository struct {
 
 type createCall struct {
 	User *model.User
+}
+
+func strPtr(s string) *string {
+	return &s
 }
 
 func (m *mockUserRepository) Create(ctx context.Context, user *model.User) error {
@@ -238,6 +243,131 @@ func TestUserService_Register_WithoutDisplayName(t *testing.T) {
 
 	if user.DisplayName != nil {
 		t.Errorf("display_name should be nil when not provided, got %v", user.DisplayName)
+	}
+}
+
+func TestUserService_Register_MissingFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		req       model.RegisterRequest
+		expectErr string
+	}{
+		{
+			name:      "missing username",
+			req:       model.RegisterRequest{Username: "", Password: "pass"},
+			expectErr: "username is required",
+		},
+		{
+			name:      "missing password",
+			req:       model.RegisterRequest{Username: "user", Password: ""},
+			expectErr: "password is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRepo := &mockUserRepository{}
+			svc := NewUserService(mockRepo)
+
+			_, err := svc.Register(context.Background(), &tt.req)
+			if err == nil || !strings.Contains(err.Error(), tt.expectErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.expectErr, err)
+			}
+
+			if len(mockRepo.createCalls) != 0 {
+				t.Fatalf("Create should not be called on validation error")
+			}
+		})
+	}
+}
+
+func TestUserService_Register_AvatarProvided(t *testing.T) {
+	avatarURL := "https://cdn.example.com/avatar.jpg"
+	avatarKey := "avatars/user1.jpg"
+
+	mockRepo := &mockUserRepository{
+		existsByUsernameFn: func(ctx context.Context, username string) (bool, error) {
+			return false, nil
+		},
+		createFn: func(ctx context.Context, user *model.User) error {
+			return nil
+		},
+	}
+
+	svc := NewUserService(mockRepo)
+	req := &model.RegisterRequest{
+		Username:  "user1",
+		Password:  "password123",
+		AvatarURL: &avatarURL,
+		AvatarKey: &avatarKey,
+	}
+
+	user, err := svc.Register(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if user.AvatarURL == nil || *user.AvatarURL != avatarURL {
+		t.Fatalf("avatar url not set correctly, got %v", user.AvatarURL)
+	}
+	if user.AvatarKey == nil || *user.AvatarKey != avatarKey {
+		t.Fatalf("avatar key not set correctly, got %v", user.AvatarKey)
+	}
+}
+
+func TestUserService_Register_AvatarMissingPair(t *testing.T) {
+	avatarURL := "https://cdn.example.com/avatar.jpg"
+
+	tests := []struct {
+		name string
+		req  model.RegisterRequest
+	}{
+		{
+			name: "url without key",
+			req:  model.RegisterRequest{Username: "user1", Password: "password123", AvatarURL: &avatarURL, AvatarKey: nil},
+		},
+		{
+			name: "key without url",
+			req:  model.RegisterRequest{Username: "user1", Password: "password123", AvatarURL: nil, AvatarKey: strPtr("avatars/key1")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRepo := &mockUserRepository{}
+			svc := NewUserService(mockRepo)
+
+			_, err := svc.Register(context.Background(), &tt.req)
+			if err == nil || !strings.Contains(err.Error(), "avatar_url and avatar_key") {
+				t.Fatalf("expected avatar pairing error, got %v", err)
+			}
+			if len(mockRepo.createCalls) != 0 {
+				t.Fatalf("Create should not be called on avatar pairing error")
+			}
+		})
+	}
+}
+
+func TestUserService_Register_NoAvatarProvided(t *testing.T) {
+	mockRepo := &mockUserRepository{
+		existsByUsernameFn: func(ctx context.Context, username string) (bool, error) {
+			return false, nil
+		},
+		createFn: func(ctx context.Context, user *model.User) error {
+			return nil
+		},
+	}
+
+	svc := NewUserService(mockRepo)
+	req := &model.RegisterRequest{Username: "user2", Password: "password123"}
+
+	user, err := svc.Register(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if user.AvatarURL != nil || user.AvatarKey != nil {
+		t.Fatalf("avatar fields should be nil when not provided, got url=%v key=%v", user.AvatarURL, user.AvatarKey)
 	}
 }
 
