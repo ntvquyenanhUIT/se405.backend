@@ -21,6 +21,5 @@ func Connect(cfg *config.Config) (*sqlx.DB, error) {
 	}
 
 	log.Println("Connected to database successfully")
-	log.Println("Hello world")
 	return db, nil
 }

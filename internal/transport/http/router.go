@@ -1,0 +1,71 @@
+package http
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+
+	"iamstagram_22520060/internal/handler"
+	"iamstagram_22520060/internal/httputil"
+	authmw "iamstagram_22520060/internal/transport/http/middleware"
+)
+
+// RouterConfig holds the dependencies needed to create routes
+type RouterConfig struct {
+	AuthHandler *handler.AuthHandler
+	JWTSecret   string
+}
+
+// NewRouter creates and configures a new Chi router with all route groups
+func NewRouter(cfg RouterConfig) chi.Router {
+	r := chi.NewRouter()
+
+	// Built-in middleware
+	r.Use(middleware.Logger)    // Log all requests
+	r.Use(middleware.Recoverer) // Recover from panics
+	r.Use(middleware.RequestID) // Add request ID to context
+
+	// Health check endpoint (useful for deployment/monitoring)
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		httputil.WriteJSON(w, 200, map[string]string{"status": "ok"})
+	})
+
+	// Public routes - no authentication required
+	r.Route("/auth", func(r chi.Router) {
+		r.Post("/register", cfg.AuthHandler.Register)
+		r.Post("/login", cfg.AuthHandler.Login)
+		r.Post("/refresh", cfg.AuthHandler.Refresh)
+	})
+
+	// Protected routes - require authentication
+	r.Group(func(r chi.Router) {
+		r.Use(authmw.AuthMiddleware(cfg.JWTSecret))
+
+		// Current user endpoints
+		r.Get("/me", cfg.AuthHandler.Me)
+
+		// Auth actions that require authentication
+		r.Post("/auth/logout", cfg.AuthHandler.Logout)
+		r.Post("/auth/logout-all", cfg.AuthHandler.LogoutAll)
+
+		// Placeholder route groups for future endpoints
+		r.Route("/feed", func(r chi.Router) {
+			// Feed endpoints (to be implemented)
+		})
+
+		r.Route("/posts", func(r chi.Router) {
+			// Post endpoints (to be implemented)
+		})
+
+		r.Route("/users", func(r chi.Router) {
+			// User endpoints (to be implemented)
+		})
+
+		r.Route("/notifications", func(r chi.Router) {
+			// Notification endpoints (to be implemented)
+		})
+	})
+
+	return r
+}
