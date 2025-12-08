@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"golang.org/x/crypto/bcrypt"
 
 	"iamstagram_22520060/internal/model"
@@ -70,6 +71,18 @@ func (m *mockUserRepository) ExistsByUsername(ctx context.Context, username stri
 	return false, nil
 }
 
+func (m *mockUserRepository) Search(ctx context.Context, query string, limit int) ([]model.UserSummary, error) {
+	return nil, nil
+}
+
+func (m *mockUserRepository) IncrementFollowerCount(ctx context.Context, tx *sqlx.Tx, userID int64, delta int) error {
+	return nil
+}
+
+func (m *mockUserRepository) IncrementFollowingCount(ctx context.Context, tx *sqlx.Tx, userID int64, delta int) error {
+	return nil
+}
+
 // =============================================================================
 // REGISTER TESTS
 // =============================================================================
@@ -88,7 +101,7 @@ func TestUserService_Register_Success(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewUserService(mockRepo)
+	svc := NewUserService(mockRepo, nil)
 
 	req := &model.RegisterRequest{
 		Username:    "testuser",
@@ -143,7 +156,7 @@ func TestUserService_Register_UsernameExists(t *testing.T) {
 			return true, nil // Username already exists
 		},
 	}
-	svc := NewUserService(mockRepo)
+	svc := NewUserService(mockRepo, nil)
 
 	req := &model.RegisterRequest{
 		Username: "existinguser",
@@ -174,7 +187,7 @@ func TestUserService_Register_CheckUsernameError(t *testing.T) {
 			return false, dbError // Database error
 		},
 	}
-	svc := NewUserService(mockRepo)
+	svc := NewUserService(mockRepo, nil)
 
 	req := &model.RegisterRequest{
 		Username: "testuser",
@@ -203,7 +216,7 @@ func TestUserService_Register_CreateError(t *testing.T) {
 			return dbError
 		},
 	}
-	svc := NewUserService(mockRepo)
+	svc := NewUserService(mockRepo, nil)
 
 	req := &model.RegisterRequest{
 		Username: "testuser",
@@ -227,7 +240,7 @@ func TestUserService_Register_WithoutDisplayName(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewUserService(mockRepo)
+	svc := NewUserService(mockRepo, nil)
 
 	req := &model.RegisterRequest{
 		Username: "testuser",
@@ -267,7 +280,7 @@ func TestUserService_Register_MissingFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockRepo := &mockUserRepository{}
-			svc := NewUserService(mockRepo)
+			svc := NewUserService(mockRepo, nil)
 
 			_, err := svc.Register(context.Background(), &tt.req)
 			if err == nil || !strings.Contains(err.Error(), tt.expectErr) {
@@ -294,7 +307,7 @@ func TestUserService_Register_AvatarProvided(t *testing.T) {
 		},
 	}
 
-	svc := NewUserService(mockRepo)
+	svc := NewUserService(mockRepo, nil)
 	req := &model.RegisterRequest{
 		Username:  "user1",
 		Password:  "password123",
@@ -335,7 +348,7 @@ func TestUserService_Register_AvatarMissingPair(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockRepo := &mockUserRepository{}
-			svc := NewUserService(mockRepo)
+			svc := NewUserService(mockRepo, nil)
 
 			_, err := svc.Register(context.Background(), &tt.req)
 			if err == nil || !strings.Contains(err.Error(), "avatar_url and avatar_key") {
@@ -358,7 +371,7 @@ func TestUserService_Register_NoAvatarProvided(t *testing.T) {
 		},
 	}
 
-	svc := NewUserService(mockRepo)
+	svc := NewUserService(mockRepo, nil)
 	req := &model.RegisterRequest{Username: "user2", Password: "password123"}
 
 	user, err := svc.Register(context.Background(), req)
@@ -440,7 +453,7 @@ func TestUserService_Login(t *testing.T) {
 			mockRepo := &mockUserRepository{
 				getByUsernameFn: tt.mockGetByUser,
 			}
-			svc := NewUserService(mockRepo)
+			svc := NewUserService(mockRepo, nil)
 
 			req := &model.LoginRequest{
 				Username: tt.username,
@@ -515,7 +528,7 @@ func TestUserService_GetByID(t *testing.T) {
 			mockRepo := &mockUserRepository{
 				getByIDFn: tt.mockGetFn,
 			}
-			svc := NewUserService(mockRepo)
+			svc := NewUserService(mockRepo, nil)
 
 			user, err := svc.GetByID(context.Background(), tt.userID)
 

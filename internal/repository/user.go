@@ -107,3 +107,39 @@ func (r *userRepository) ExistsByUsername(ctx context.Context, username string) 
 
 	return exists, nil
 }
+
+func (r *userRepository) Search(ctx context.Context, query string, limit int) ([]model.UserSummary, error) {
+	searchQuery := `
+		SELECT id, username, display_name, avatar_url
+		FROM users
+		WHERE username ILIKE $1
+		ORDER BY follower_count DESC
+		LIMIT $2
+	`
+
+	var users []model.UserSummary
+	err := r.db.SelectContext(ctx, &users, searchQuery, query+"%", limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search users: %w", err)
+	}
+
+	return users, nil
+}
+
+func (r *userRepository) IncrementFollowerCount(ctx context.Context, tx *sqlx.Tx, userID int64, delta int) error {
+	query := `UPDATE users SET follower_count = follower_count + $1 WHERE id = $2`
+	_, err := tx.ExecContext(ctx, query, delta, userID)
+	if err != nil {
+		return fmt.Errorf("failed to increment follower count: %w", err)
+	}
+	return nil
+}
+
+func (r *userRepository) IncrementFollowingCount(ctx context.Context, tx *sqlx.Tx, userID int64, delta int) error {
+	query := `UPDATE users SET following_count = following_count + $1 WHERE id = $2`
+	_, err := tx.ExecContext(ctx, query, delta, userID)
+	if err != nil {
+		return fmt.Errorf("failed to increment following count: %w", err)
+	}
+	return nil
+}

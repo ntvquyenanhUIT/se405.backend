@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -50,7 +51,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
-	displayName := r.FormValue("display_name")
+	displayName := strings.TrimSpace(r.FormValue("display_name"))
 
 	if username == "" {
 		httputil.WriteBadRequest(w, "Username is required")
@@ -58,6 +59,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	if password == "" {
 		httputil.WriteBadRequest(w, "Password is required")
+		return
+	}
+	if displayName == "" {
+		httputil.WriteBadRequest(w, "Display Name is required")
 		return
 	}
 
@@ -74,6 +79,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(uploadErr, model.ErrInvalidImageType):
 				httputil.WriteBadRequestWithCode(w, model.CodeInvalidImageType, "Unsupported image type. Allowed: jpeg, png, gif, webp")
 			default:
+				log.Printf("[ERROR] Register - avatar upload: %v", uploadErr)
 				httputil.WriteInternalError(w, "Failed to upload avatar")
 			}
 			return
@@ -106,6 +112,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			httputil.WriteConflict(w, "Username already exists")
 			return
 		}
+		log.Printf("[ERROR] Register - user creation: %v", err)
 		httputil.WriteInternalError(w, err.Error())
 		return
 	}
@@ -139,6 +146,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			httputil.WriteUnauthorized(w, "Invalid username or password")
 			return
 		}
+		// TODO: Replace with proper logger (slog/zap) in production
+		log.Printf("[ERROR] Login - authentication: %v", err)
 		httputil.WriteInternalError(w, "Failed to login")
 		return
 	}
@@ -150,6 +159,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Generate token pair (access + refresh)
 	tokenPair, err := h.authService.GenerateTokenPair(r.Context(), user.ID, deviceInfo, ipAddress)
 	if err != nil {
+		// TODO: Replace with proper logger (slog/zap) in production
+		log.Printf("[ERROR] Login - token generation: %v", err)
 		httputil.WriteInternalError(w, "Failed to generate tokens")
 		return
 	}
@@ -180,6 +191,8 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 			httputil.WriteNotFound(w, "User not found")
 			return
 		}
+		// TODO: Replace with proper logger (slog/zap) in production
+		log.Printf("[ERROR] Me - get user: %v", err)
 		httputil.WriteInternalError(w, "Failed to get user")
 		return
 	}
@@ -216,6 +229,8 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, model.ErrRefreshTokenReused):
 			httputil.WriteUnauthorizedWithCode(w, model.CodeTokenReused, "Refresh token reuse detected. Please login again.")
 		default:
+			// TODO: Replace with proper logger (slog/zap) in production
+			log.Printf("[ERROR] Refresh - token refresh: %v", err)
 			httputil.WriteInternalError(w, "Failed to refresh tokens")
 		}
 		return
@@ -248,6 +263,8 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		// TODO: Replace with proper logger (slog/zap) in production
+		log.Printf("[ERROR] Logout - revoke token: %v", err)
 		httputil.WriteInternalError(w, "Failed to logout")
 		return
 	}
@@ -270,6 +287,8 @@ func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	// Revoke all refresh tokens for this user
 	err := h.authService.RevokeAllUserTokens(r.Context(), userID)
 	if err != nil {
+		// TODO: Replace with proper logger (slog/zap) in production
+		log.Printf("[ERROR] LogoutAll - revoke all tokens: %v", err)
 		httputil.WriteInternalError(w, "Failed to logout from all devices")
 		return
 	}

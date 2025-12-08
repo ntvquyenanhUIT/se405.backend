@@ -13,8 +13,10 @@ import (
 
 // RouterConfig holds the dependencies needed to create routes
 type RouterConfig struct {
-	AuthHandler *handler.AuthHandler
-	JWTSecret   string
+	AuthHandler   *handler.AuthHandler
+	UserHandler   *handler.UserHandler
+	FollowHandler *handler.FollowHandler
+	JWTSecret     string
 }
 
 // NewRouter creates and configures a new Chi router with all route groups
@@ -38,6 +40,14 @@ func NewRouter(cfg RouterConfig) chi.Router {
 		r.Post("/refresh", cfg.AuthHandler.Refresh)
 	})
 
+	// Public user endpoints with optional authentication
+	r.Route("/users", func(r chi.Router) {
+		r.With(authmw.OptionalAuthMiddleware(cfg.JWTSecret)).Get("/search", cfg.UserHandler.Search)
+		r.With(authmw.OptionalAuthMiddleware(cfg.JWTSecret)).Get("/{id}", cfg.UserHandler.GetProfile)
+		r.With(authmw.OptionalAuthMiddleware(cfg.JWTSecret)).Get("/{id}/followers", cfg.FollowHandler.GetFollowers)
+		r.With(authmw.OptionalAuthMiddleware(cfg.JWTSecret)).Get("/{id}/following", cfg.FollowHandler.GetFollowing)
+	})
+
 	// Protected routes - require authentication
 	r.Group(func(r chi.Router) {
 		r.Use(authmw.AuthMiddleware(cfg.JWTSecret))
@@ -49,6 +59,10 @@ func NewRouter(cfg RouterConfig) chi.Router {
 		r.Post("/auth/logout", cfg.AuthHandler.Logout)
 		r.Post("/auth/logout-all", cfg.AuthHandler.LogoutAll)
 
+		// Follow/unfollow actions require authentication
+		r.Post("/users/{id}/follow", cfg.FollowHandler.Follow)
+		r.Delete("/users/{id}/follow", cfg.FollowHandler.Unfollow)
+
 		// Placeholder route groups for future endpoints
 		r.Route("/feed", func(r chi.Router) {
 			// Feed endpoints (to be implemented)
@@ -58,9 +72,7 @@ func NewRouter(cfg RouterConfig) chi.Router {
 			// Post endpoints (to be implemented)
 		})
 
-		r.Route("/users", func(r chi.Router) {
-			// User endpoints (to be implemented)
-		})
+		// Removed /users route group - user endpoints are now public with optional auth
 
 		r.Route("/notifications", func(r chi.Router) {
 			// Notification endpoints (to be implemented)

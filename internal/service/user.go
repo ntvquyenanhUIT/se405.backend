@@ -13,12 +13,15 @@ import (
 
 // UserService handles business logic for user operations
 type UserService struct {
-	repo repository.UserRepository
+	repo       repository.UserRepository
+	followRepo repository.FollowRepository
 }
 
-// NewUserService creates a new UserService with the given repository
-func NewUserService(repo repository.UserRepository) *UserService {
-	return &UserService{repo: repo}
+func NewUserService(repo repository.UserRepository, followRepo repository.FollowRepository) *UserService {
+	return &UserService{
+		repo:       repo,
+		followRepo: followRepo,
+	}
 }
 
 // Register creates a new user account with optional avatar metadata.
@@ -97,4 +100,72 @@ func (s *UserService) GetByID(ctx context.Context, id int64) (*model.User, error
 		return nil, err
 	}
 	return user, nil
+}
+
+// GetProfile retrieves a user's profile with follow relationship status.
+//
+// Design decision - Two-query approach:
+// 1. Fetch user by ID (fails fast with 404 if user doesn't exist)
+// 2. Check if viewer follows this user (only if viewer is authenticated and not viewing self)
+//
+// Alternative: Single query with LEFT JOIN on follows table
+// Trade-offs:
+//
+//	Current approach:
+//	  ✅ Clear separation: user existence check vs follow status check
+//	  ✅ Graceful degradation (follow check failure doesn't block profile)
+//	  ✅ Simpler SQL (no conditional JOIN logic)
+//	  ⚠️ Two DB roundtrips
+//	LEFT JOIN approach:
+//	  ✅ Single DB roundtrip
+//	  ❌ More complex SQL with conditional JOIN
+//	  ❌ Follow check failure = entire request fails
+//
+// Current approach prioritizes simplicity and robustness. Optimize if profiling shows issues.
+func (s *UserService) GetProfile(ctx context.Context, userID int64, viewerID *int64) (*model.ProfileResponse, error) {
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	profile := &model.ProfileResponse{
+		User:        user,
+		IsFollowing: false,
+	}
+
+	if viewerID != nil && *viewerID != userID {
+		isFollowing, err := s.followRepo.Exists(ctx, *viewerID, userID)
+		if err == nil {
+			profile.IsFollowing = isFollowing
+		}
+	}
+
+	return profile, nil
+}
+
+// Search finds users by username with optional follow status enrichment.
+// Uses batch query (CheckFollows with ANY($1)) to avoid N+1 problem when checking
+// follow relationships for multiple users. See GetFollowers for detailed explanation
+// of the two-query approach vs JOIN trade-offs.
+func (s *UserService) Search(ctx context.Context, query string, limit int, viewerID *int64) ([]model.UserSummary, error) {
+	users, err := s.repo.Search(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if viewerID != nil && len(users) > 0 {
+		userIDs := make([]int64, len(users))
+		for i, user := range users {
+			userIDs[i] = user.ID
+		}
+
+		followMap, err := s.followRepo.CheckFollows(ctx, *viewerID, userIDs)
+		if err == nil {
+			for i := range users {
+				users[i].IsFollowing = followMap[users[i].ID]
+			}
+		}
+	}
+
+	return users, nil
 }

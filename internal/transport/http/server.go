@@ -28,10 +28,11 @@ func Run() error {
 	// Create repositories
 	userRepo := repository.NewUserRepository(db)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(db)
+	followRepo := repository.NewFollowRepository(db)
 
-	// Create services
-	userService := service.NewUserService(userRepo)
+	userService := service.NewUserService(userRepo, followRepo)
 	authService := service.NewAuthService(refreshTokenRepo, cfg)
+	followService := service.NewFollowService(followRepo, userRepo, db)
 	mediaService, err := service.NewMediaService(context.Background(), cfg)
 	if err != nil {
 		return fmt.Errorf("failed to initialize media service: %w", err)
@@ -39,22 +40,32 @@ func Run() error {
 
 	// Create handlers
 	authHandler := handler.NewAuthHandler(userService, authService, mediaService, cfg)
+	userHandler := handler.NewUserHandler(userService)
+	followHandler := handler.NewFollowHandler(followService)
 
 	// Create router with dependencies
 	router := NewRouter(RouterConfig{
-		AuthHandler: authHandler,
-		JWTSecret:   cfg.JWTSecret,
+		AuthHandler:   authHandler,
+		UserHandler:   userHandler,
+		FollowHandler: followHandler,
+		JWTSecret:     cfg.JWTSecret,
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)
 	log.Printf("Starting server on %s", addr)
 	log.Printf("Routes:")
-	log.Printf("  POST /auth/register     - Register new user")
-	log.Printf("  POST /auth/login        - Login and get tokens")
-	log.Printf("  POST /auth/refresh      - Refresh tokens")
-	log.Printf("  POST /auth/logout       - Logout (protected)")
-	log.Printf("  POST /auth/logout-all   - Logout all devices (protected)")
-	log.Printf("  GET  /me                - Get current user (protected)")
+	log.Printf("  POST   /auth/register         - Register new user")
+	log.Printf("  POST   /auth/login            - Login and get tokens")
+	log.Printf("  POST   /auth/refresh          - Refresh tokens")
+	log.Printf("  POST   /auth/logout           - Logout (protected)")
+	log.Printf("  POST   /auth/logout-all       - Logout all devices (protected)")
+	log.Printf("  GET    /me                    - Get current user (protected)")
+	log.Printf("  GET    /users/search          - Search users (optional auth)")
+	log.Printf("  GET    /users/:id             - Get user profile (optional auth)")
+	log.Printf("  GET    /users/:id/followers   - Get user followers (optional auth)")
+	log.Printf("  GET    /users/:id/following   - Get users following (optional auth)")
+	log.Printf("  POST   /users/:id/follow      - Follow user (protected)")
+	log.Printf("  DELETE /users/:id/follow      - Unfollow user (protected)")
 
 	return stdhttp.ListenAndServe(addr, router)
 }

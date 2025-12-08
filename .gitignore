@@ -1,8 +1,9 @@
 .env
 
-.github/
 
-FOUNDATION_SETUP_PLAN.md
-
+.github
 
 /plan
+
+
+/lessons

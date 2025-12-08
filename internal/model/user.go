@@ -37,6 +37,11 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+type ProfileResponse struct {
+	*User
+	IsFollowing bool `json:"is_following"`
+}
+
 var (
 	// ErrUserNotFound is returned when a user cannot be found
 	ErrUserNotFound = errors.New("user not found")
