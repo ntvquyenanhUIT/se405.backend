@@ -30,6 +30,8 @@ type Config struct {
 
 	DefaultAvatarURL string
 	DefaultAvatarKey string
+
+	RedisURL string
 }
 
 func LoadConfig() (*Config, error) {
@@ -62,6 +64,11 @@ func LoadConfig() (*Config, error) {
 	defaultAvatarURL := os.Getenv("DEFAULT_AVATAR_URL")
 	defaultAvatarKey := os.Getenv("DEFAULT_AVATAR_KEY")
 
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379"
+	}
+
 	return &Config{
 		DBHost:     os.Getenv("DB_HOST"),
 		DBPort:     os.Getenv("DB_PORT"),
@@ -84,5 +91,7 @@ func LoadConfig() (*Config, error) {
 
 		DefaultAvatarURL: defaultAvatarURL,
 		DefaultAvatarKey: defaultAvatarKey,
+
+		RedisURL: redisURL,
 	}, nil
 }

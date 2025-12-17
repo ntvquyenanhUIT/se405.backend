@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -26,6 +27,11 @@ type MediaService struct {
 	bucket    string
 	publicURL string
 }
+
+const (
+	postPresignExpiresIn    = 15 * time.Minute
+	postPresignExpiresInSec = int(postPresignExpiresIn / time.Second)
+)
 
 // NewMediaService constructs an S3-compatible client for Cloudflare R2.
 func NewMediaService(ctx context.Context, cfg *config.Config) (*MediaService, error) {
@@ -75,6 +81,62 @@ func (s *MediaService) UploadAvatar(ctx context.Context, file multipart.File, he
 
 	url := fmt.Sprintf("%s/%s", s.publicURL, key)
 	return &domain.UploadResult{URL: url, Key: key}, nil
+}
+
+// PresignPostUpload returns a presigned PUT URL for uploading a single post media object directly to R2.
+// The client should PUT the bytes to UploadURL with the same Content-Type, then use PublicURL in POST /posts.
+func (s *MediaService) PresignPostUpload(ctx context.Context, contentType string) (*domain.PresignPostUploadResponse, error) {
+	contentType = strings.TrimSpace(contentType)
+	if contentType == "" {
+		return nil, fmt.Errorf("content_type is required")
+	}
+	if !domain.IsAllowedImageType(contentType) {
+		return nil, domain.ErrInvalidImageType
+	}
+
+	ext, err := extFromContentType(contentType)
+	if err != nil {
+		return nil, err
+	}
+
+	key := fmt.Sprintf("%s/%s%s", domain.PostMediaFolder, uuid.NewString(), ext)
+
+	presigner := s3.NewPresignClient(s.s3Client)
+	input := &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
+	}
+
+	res, err := presigner.PresignPutObject(ctx, input, func(po *s3.PresignOptions) {
+		po.Expires = postPresignExpiresIn
+	})
+	if err != nil {
+		return nil, fmt.Errorf("presign put object: %w", err)
+	}
+
+	publicURL := fmt.Sprintf("%s/%s", s.publicURL, key)
+	return &domain.PresignPostUploadResponse{
+		UploadURL:  res.URL,
+		PublicURL:  publicURL,
+		Key:        key,
+		ExpiresInS: postPresignExpiresInSec,
+	}, nil
+}
+
+func extFromContentType(contentType string) (string, error) {
+	switch contentType {
+	case domain.ContentTypeJPEG:
+		return ".jpg", nil
+	case domain.ContentTypePNG:
+		return ".png", nil
+	case domain.ContentTypeGIF:
+		return ".gif", nil
+	case domain.ContentTypeWebP:
+		return ".webp", nil
+	default:
+		return "", domain.ErrInvalidImageType
+	}
 }
 
 // readAndValidateImage loads the upload into memory with size and type checks.

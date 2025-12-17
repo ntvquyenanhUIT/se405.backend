@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 
 	"iamstagram_22520060/internal/model"
+	"iamstagram_22520060/internal/queue"
 	"iamstagram_22520060/internal/repository"
 )
 
@@ -15,13 +17,20 @@ type FollowService struct {
 	followRepo repository.FollowRepository
 	userRepo   repository.UserRepository
 	db         *sqlx.DB
+	publisher  queue.Publisher
 }
 
-func NewFollowService(followRepo repository.FollowRepository, userRepo repository.UserRepository, db *sqlx.DB) *FollowService {
+func NewFollowService(
+	followRepo repository.FollowRepository,
+	userRepo repository.UserRepository,
+	db *sqlx.DB,
+	publisher queue.Publisher,
+) *FollowService {
 	return &FollowService{
 		followRepo: followRepo,
 		userRepo:   userRepo,
 		db:         db,
+		publisher:  publisher,
 	}
 }
 
@@ -58,7 +67,24 @@ func (s *FollowService) Follow(ctx context.Context, followerID, followeeID int64
 		return err
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	// Publish event for async backfill (after commit!)
+	if s.publisher != nil {
+		event := queue.NewUserFollowedEvent(followerID, followeeID)
+		msgID, err := s.publisher.Publish(ctx, queue.StreamFeed, event)
+		if err != nil {
+			log.Printf("[FollowService] Failed to publish UserFollowed event: follower=%d followee=%d err=%v",
+				followerID, followeeID, err)
+		} else {
+			log.Printf("[FollowService] Published UserFollowed: follower=%d followee=%d msgID=%s",
+				followerID, followeeID, msgID)
+		}
+	}
+
+	return nil
 }
 
 func (s *FollowService) Unfollow(ctx context.Context, followerID, followeeID int64) error {
@@ -80,7 +106,24 @@ func (s *FollowService) Unfollow(ctx context.Context, followerID, followeeID int
 		return err
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	// Publish event for async removal (after commit!)
+	if s.publisher != nil {
+		event := queue.NewUserUnfollowedEvent(followerID, followeeID)
+		msgID, err := s.publisher.Publish(ctx, queue.StreamFeed, event)
+		if err != nil {
+			log.Printf("[FollowService] Failed to publish UserUnfollowed event: follower=%d followee=%d err=%v",
+				followerID, followeeID, err)
+		} else {
+			log.Printf("[FollowService] Published UserUnfollowed: follower=%d followee=%d msgID=%s",
+				followerID, followeeID, msgID)
+		}
+	}
+
+	return nil
 }
 
 // GetFollowers retrieves users who follow the specified user with cursor-based pagination.

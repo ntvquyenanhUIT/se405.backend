@@ -6,6 +6,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
+	"iamstagram_22520060/internal/cache"
 	"iamstagram_22520060/internal/model"
 )
 
@@ -34,4 +35,20 @@ type FollowRepository interface {
 	GetFollowers(ctx context.Context, userID int64, cursor *time.Time, limit int) ([]model.UserSummary, *time.Time, error)
 	GetFollowing(ctx context.Context, userID int64, cursor *time.Time, limit int) ([]model.UserSummary, *time.Time, error)
 	CheckFollows(ctx context.Context, followerID int64, followeeIDs []int64) (map[int64]bool, error)
+	// New methods for feed system
+	GetFollowerIDs(ctx context.Context, userID int64) ([]int64, error)
+	GetFolloweeIDs(ctx context.Context, userID int64) ([]int64, error)
+}
+
+type PostRepository interface {
+	Create(ctx context.Context, userID int64, caption *string, mediaURLs []string) (*model.Post, error)
+	GetByID(ctx context.Context, postID int64) (*model.Post, error)
+	GetByIDs(ctx context.Context, postIDs []int64) ([]model.Post, error)
+	Delete(ctx context.Context, postID, userID int64) error
+	GetUserThumbnails(ctx context.Context, userID int64, cursor *string, limit int) ([]model.PostThumbnail, *string, error)
+	GetRecentPostsByUser(ctx context.Context, userID int64, limit int) ([]cache.PostScore, error)
+	GetFeedPostIDs(ctx context.Context, followeeIDs []int64, limit int) ([]cache.PostScore, error)
+	GetAuthorID(ctx context.Context, postID int64) (int64, error)
+	// CheckLikes checks which posts the user has liked
+	CheckLikes(ctx context.Context, userID int64, postIDs []int64) (map[int64]bool, error)
 }

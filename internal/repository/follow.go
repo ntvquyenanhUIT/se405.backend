@@ -213,3 +213,25 @@ func (r *followRepository) CheckFollows(ctx context.Context, followerID int64, f
 
 	return result, nil
 }
+
+// GetFollowerIDs returns all follower IDs for a user (for fan-out).
+func (r *followRepository) GetFollowerIDs(ctx context.Context, userID int64) ([]int64, error) {
+	query := `SELECT follower_id FROM follows WHERE followee_id = $1`
+	var ids []int64
+	err := r.db.SelectContext(ctx, &ids, query, userID)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("get follower ids: %w", err)
+	}
+	return ids, nil
+}
+
+// GetFolloweeIDs returns all followee IDs for a user (for cache warming).
+func (r *followRepository) GetFolloweeIDs(ctx context.Context, userID int64) ([]int64, error) {
+	query := `SELECT followee_id FROM follows WHERE follower_id = $1`
+	var ids []int64
+	err := r.db.SelectContext(ctx, &ids, query, userID)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("get followee ids: %w", err)
+	}
+	return ids, nil
+}

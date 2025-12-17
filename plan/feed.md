@@ -1,10 +1,43 @@
 
 # Feed Architecture
 
+## API Endpoints (current spec)
+
+> Note: naming/paths should be confirmed (see Open Questions).
+
+- `GET /feed?cursor=<post_id>:<timestamp>`
+   - Purpose: home/news feed.
+   - Auth: **required** (mobile uses `Authorization: Bearer <access_token>`).
+   - Pagination: server-side fixed `limit = 10` (no client `limit` query param).
+   - Cursor: `<post_id>:<created_at_unix>`.
+   - Response: direct object style `{ posts, next_cursor, has_more }`.
+
+- `GET /users/feed?userid=<id>&cursor=<...>`
+   - Purpose: profile grid thumbnails.
+   - Auth: public.
+   - Pagination: server-side fixed `limit = 10`.
+   - Cursor: DB-driven (spec says timestamp; recommendation is a compound cursor to avoid ties; see Open Questions).
+   - Response: thumbnails only (media position 0), plus `like_count` and `comment_count`.
+
+- `GET /posts/:id`
+   - Purpose: full post detail page.
+   - Auth: public **with optional auth** so we can set `has_liked` for logged-in users; otherwise `has_liked=false`.
+
+- `POST /posts`
+   - Purpose: create a post.
+   - Auth: required.
+   - Constraints: 1–10 images; each ≤ 5MB; caption optional.
+   - Side effect: fan-out post ID to followers’ feed caches (async via Redis Streams).
+
+- `DELETE /posts/:id`
+   - Purpose: delete a post.
+   - Auth: required; must be post owner.
+   - Side effect: fan-out removal from followers’ feed caches (async via Redis Streams).
+
 ## Core Principles
 
 1. **Fan-out-on-write** — When a user posts, push post ID to all followers' cached feeds
-2. **Cursor pagination** — Use `post_id` as cursor (not index) for stable pagination
+2. **Cursor pagination** — Use compound cursor `{id}:{timestamp}` for stable pagination + DB fallback
 3. **Chronological order** — Feed sorted by `created_at DESC` (newest first)
 4. **Cache configuration** — Cap: 500 items | TTL: 7 days (refresh on every access)
 5. **Cold start** — Precompute feed for new users (enforce following some accounts first sign-in)
@@ -58,17 +91,17 @@ Example:
 > User scrolls down, cursor points to a post that exists in cache.
 
 ```
-Request: GET /feed?cursor=1040
+Request: GET /feed?cursor=1040:1732897000
 ```
 
 **Steps:**
-1. Parse cursor from request (`cursor = 1040`)
-2. Get cursor's score: `ZSCORE feed:user:404 1040` → `1732897000`
+1. Parse cursor: `post_id = 1040`, `timestamp = 1732897000`
+2. Get cursor's score: `ZSCORE feed:user:404 1040` → `1732897000` (found!)
 3. Get next 10 posts older than cursor: `ZREVRANGEBYSCORE feed:user:404 (1732897000 -inf LIMIT 0 10`
 4. Hydrate: Query DB for full post details by IDs
-5. Build `next_cursor` = last post ID in response
+5. Build `next_cursor` from last post: `"{id}:{created_at_unix}"`
 6. Refresh TTL: `EXPIRE feed:user:404 604800`
-7. Return `{ posts: [...], next_cursor: "1030", has_more: true }`
+7. Return `{ posts: [...], next_cursor: "1030:1732896000", has_more: true }`
 
 ---
 
@@ -82,12 +115,13 @@ Request: GET /feed (no cursor)
 
 **Steps:**
 1. No cursor in request → start from newest
-2. Get top 10 post IDs: `ZREVRANGE feed:user:404 0 9`
-3. If cache empty → trigger cold start flow (populate cache from DB first)
-4. Hydrate: Query DB for full post details by IDs
-5. Build `next_cursor` = last post ID in response
-6. Refresh TTL: `EXPIRE feed:user:404 604800`
-7. Return `{ posts: [...], next_cursor: "1041", has_more: true }`
+2. Check cache size: `ZCARD feed:user:404`
+3. If cache empty → trigger **Case 11 (Cold Start)** to warm cache first
+4. Get top 10 post IDs: `ZREVRANGE feed:user:404 0 9 WITHSCORES`
+5. Hydrate: Query DB for full post details by IDs
+6. Build `next_cursor` from last post: `"{id}:{score}"`
+7. Refresh TTL: `EXPIRE feed:user:404 604800`
+8. Return `{ posts: [...], next_cursor: "1041:1732899000", has_more: true }`
 
 ---
 
@@ -96,42 +130,50 @@ Request: GET /feed (no cursor)
 > User has scrolled through all posts in cache (cache is small or user scrolled a lot).
 
 ```
-Request: GET /feed?cursor=1045 (1045 is the oldest post in cache)
+Request: GET /feed?cursor=1045:1732898000 (1045 is the oldest post in cache)
 ```
 
 **Steps:**
-1. Parse cursor from request (`cursor = 1045`)
-2. Get cursor's score: `ZSCORE feed:user:404 1045`
-3. Query cache: `ZREVRANGEBYSCORE feed:user:404 (<score> -inf LIMIT 0 10`
-4. If result is empty or insufficient → **Fall back to DB**:
-   - Join `posts` with `follows` table
-   - Filter: `follower_id = current_user` AND `(created_at, id) < cursor's values`
-   - Order by `created_at DESC, id DESC`
-   - Limit 10
-5. If DB returns posts → Return them with `has_more: true`
-6. If DB returns empty → Return `{ posts: [], next_cursor: null, has_more: false }`
-7. UI displays: *"You're all caught up!"*
-
-**Note:** Do NOT re-warm cache with old posts. Cache is for recent posts only.
+1. Parse cursor: `post_id = 1045`, `timestamp = 1732898000`
+2. Get cursor's score: `ZSCORE feed:user:404 1045` → found, but...
+3. Query cache: `ZREVRANGEBYSCORE feed:user:404 (1732898000 -inf LIMIT 0 10`
+4. If result is empty or insufficient → return it with `has_more=false` so UI can show "you are all caught up!"
 
 ---
 
 ### 4. Cursor Not Found in Cache ❓
 
-> Cursor points to a post that no longer exists in cache (TTL expired, post deleted, etc.)
+> Cursor post was deleted from cache, but cache is otherwise intact.
 
 ```
-Request: GET /feed?cursor=1040 (but 1040 is not in cache)
+Request: GET /feed?cursor=902:1732897000 (but 902 is not in cache)
 ```
+
+**Cursor Format:** `{post_id}:{unix_timestamp}` — encodes both ID and timestamp so we can fall back to DB even if post is deleted.
 
 **Steps:**
-1. Parse cursor from request (`cursor = 1040`)
-2. Get cursor's score: `ZSCORE feed:user:404 1040` → `nil` (not found)
-3. **Fall back to DB**: Same as Case 3 (Cache Exhausted)
-   - Query posts older than cursor from followed users
-4. If cursor post doesn't exist in DB either:
-   - Option: Return from top (treat as refresh) for better UX
-5. Return response with appropriate `has_more` flag
+1. Parse cursor: `post_id = 902`, `timestamp = 1732897000`
+2. Get cursor's score: `ZSCORE feed:user:404 902` → `nil` (not found)
+3. **Fall back to DB** using the timestamp from cursor:
+   ```sql
+   SELECT ... FROM posts
+   JOIN follows ON posts.user_id = follows.followee_id
+   WHERE follows.follower_id = 404
+     AND (posts.created_at, posts.id) < ($timestamp, $post_id)
+   ORDER BY posts.created_at DESC, posts.id DESC
+   LIMIT 10
+   ```
+4. Return posts with `next_cursor` pointing to last post
+5. **Next request resumes from cache** — the other posts (901, 900, 890...) are still there!
+
+**Why no re-warming needed?**
+```
+Cache: [950, 940, 930, 920, 910, 902, 901, 900, 890, 880, ...]
+                              ↑ deleted
+DB returns: [901, 900, 890, 880, 875, 870, 865, 860, 855, 850]
+next_cursor = 850:1732896000
+Next request: ZSCORE 850 → exists! ✅ Back to normal cache flow
+```
 
 ---
 
@@ -221,15 +263,69 @@ Event: User 501 deletes post 1050
 
 ### 10. User with 0 Followees 👤
 
-> New user hasn't followed anyone yet (after onboarding).
+> User hasn't followed anyone yet.
 
 **On fan-out-on-write:** No followers = no targets = nothing to do.
 
 **On read:**
-1. Cache is empty
-2. DB query returns no posts (no followees)
+1. Cache is empty → triggers Case 11 (Cold Start)
+2. Cold Start queries DB but returns 0 posts (no followees)
 3. Return `{ posts: [], next_cursor: null, has_more: false }`
 4. UI displays: *"Follow some accounts to see posts!"*
+
+---
+
+### 11. Cold Start (Cache Warming) 🔥
+
+> Cache is empty. Applies to: new users after onboarding, or returning users inactive > 7 days.
+
+```
+Trigger: ZCARD feed:user:404 == 0 during GET /feed
+```
+
+**Steps:**
+1. Query DB for recent posts from all followed users:
+   ```sql
+   SELECT id, user_id, caption, created_at, like_count, comment_count, ...
+   FROM posts
+   JOIN follows ON posts.user_id = follows.followee_id
+   WHERE follows.follower_id = 404 AND posts.deleted_at IS NULL
+   ORDER BY posts.created_at DESC
+   LIMIT 500
+   ```
+2. If DB returns 0 posts → return empty feed (Case 10 behavior)
+3. Warm cache with all 500 posts (pipeline for efficiency):
+   ```
+   ZADD feed:user:404 <created_at_1> <post_id_1>
+   ZADD feed:user:404 <created_at_2> <post_id_2>
+   ... (pipelined)
+   EXPIRE feed:user:404 604800
+   ```
+4. First 10 posts are already hydrated (full details from step 1)
+5. Build `next_cursor` from 10th post: `"{id}:{created_at_unix}"`
+6. Return `{ posts: [first 10], next_cursor: "...", has_more: true }`
+
+**Frontend UX:**
+
+| Scenario | How to detect | UX |
+|----------|---------------|----|
+| New user after onboarding | `is_new_user = true` | Show "Preparing your feed..." spinner |
+| Returning inactive user | `is_new_user = false` | Normal feed loading spinner |
+
+**Note:** Backend logic is identical for both. Only frontend presentation differs.
+
+---
+
+## Cursor Format
+
+**Format:** `{post_id}:{unix_timestamp}`
+
+**Example:** `1041:1732899000`
+
+**Why compound cursor?**
+- If cursor post is deleted, we still have the timestamp for DB fallback
+- No extra DB lookup needed to find post's `created_at`
+- Self-contained — cursor has all info needed for pagination
 
 ---
 
@@ -248,7 +344,7 @@ Event: User 501 deletes post 1050
       "media": [...]
     }
   ],
-  "next_cursor": "1041",
+  "next_cursor": "1041:1732899000",
   "has_more": true
 }
 ```
@@ -256,6 +352,15 @@ Event: User 501 deletes post 1050
 | Field | Description |
 |-------|-------------|
 | `posts` | Array of hydrated post objects |
-| `next_cursor` | Last post ID in response (use for next request) |
+| `next_cursor` | Compound cursor `{id}:{timestamp}` for next request |
 | `has_more` | `false` when user has seen all available posts |
 
+---
+
+## Open Questions (need to settle before implementation)
+
+1. **Cursor for `GET /users/feed`:** spec originally said timestamp-only.
+   - Recommendation (accepted): use a compound cursor like `<post_id>:<created_at_unix>` (same style as `/feed`) to avoid ties.
+
+2. **DB prerequisites:** `posts` tables exist in DB but migration files were missing.
+   - This repo now includes `000006_create_posts_tables.*.sql` and `000007_create_post_comments_table.*.sql`.

@@ -16,6 +16,9 @@ type RouterConfig struct {
 	AuthHandler   *handler.AuthHandler
 	UserHandler   *handler.UserHandler
 	FollowHandler *handler.FollowHandler
+	FeedHandler   *handler.FeedHandler
+	PostHandler   *handler.PostHandler
+	MediaHandler  *handler.MediaHandler
 	JWTSecret     string
 }
 
@@ -23,10 +26,9 @@ type RouterConfig struct {
 func NewRouter(cfg RouterConfig) chi.Router {
 	r := chi.NewRouter()
 
-	// Built-in middleware
-	r.Use(middleware.Logger)    // Log all requests
-	r.Use(middleware.Recoverer) // Recover from panics
-	r.Use(middleware.RequestID) // Add request ID to context
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.RequestID)
 
 	// Health check endpoint (useful for deployment/monitoring)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +48,11 @@ func NewRouter(cfg RouterConfig) chi.Router {
 		r.With(authmw.OptionalAuthMiddleware(cfg.JWTSecret)).Get("/{id}", cfg.UserHandler.GetProfile)
 		r.With(authmw.OptionalAuthMiddleware(cfg.JWTSecret)).Get("/{id}/followers", cfg.FollowHandler.GetFollowers)
 		r.With(authmw.OptionalAuthMiddleware(cfg.JWTSecret)).Get("/{id}/following", cfg.FollowHandler.GetFollowing)
+		r.With(authmw.OptionalAuthMiddleware(cfg.JWTSecret)).Get("/{id}/posts", cfg.PostHandler.GetUserPosts)
 	})
+
+	// Public post endpoint with optional authentication
+	r.With(authmw.OptionalAuthMiddleware(cfg.JWTSecret)).Get("/posts/{id}", cfg.PostHandler.GetByID)
 
 	// Protected routes - require authentication
 	r.Group(func(r chi.Router) {
@@ -63,16 +69,16 @@ func NewRouter(cfg RouterConfig) chi.Router {
 		r.Post("/users/{id}/follow", cfg.FollowHandler.Follow)
 		r.Delete("/users/{id}/follow", cfg.FollowHandler.Unfollow)
 
-		// Placeholder route groups for future endpoints
-		r.Route("/feed", func(r chi.Router) {
-			// Feed endpoints (to be implemented)
-		})
+		// Feed endpoint
+		r.Get("/feed", cfg.FeedHandler.GetFeed)
 
-		r.Route("/posts", func(r chi.Router) {
-			// Post endpoints (to be implemented)
-		})
+		// Post endpoints
+		r.Post("/posts", cfg.PostHandler.Create)
+		r.Delete("/posts/{id}", cfg.PostHandler.Delete)
 
-		// Removed /users route group - user endpoints are now public with optional auth
+		// Media endpoints (direct-to-R2 uploads)
+		r.Post("/media/posts/presign", cfg.MediaHandler.PresignPostUpload)
+		r.Post("/media/posts/presign/batch", cfg.MediaHandler.PresignPostUploadBatch)
 
 		r.Route("/notifications", func(r chi.Router) {
 			// Notification endpoints (to be implemented)

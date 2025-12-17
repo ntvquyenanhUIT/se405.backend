@@ -46,6 +46,31 @@ type UploadResult struct {
 	Key string `json:"key"`
 }
 
+// PresignPostUploadRequest requests a presigned URL for uploading post media directly to R2.
+// Client uploads bytes to UploadURL, then uses PublicURL in POST /posts media_urls.
+type PresignPostUploadRequest struct {
+	ContentType string `json:"content_type"`
+	FileSize    int64  `json:"file_size"` // Optional but recommended for validation
+}
+
+// PresignPostUploadResponse returns upload details for direct-to-R2 uploads.
+type PresignPostUploadResponse struct {
+	UploadURL  string `json:"upload_url"`
+	PublicURL  string `json:"public_url"`
+	Key        string `json:"key"`
+	ExpiresInS int    `json:"expires_in"`
+}
+
+// PresignPostUploadBatchRequest requests multiple presigned URLs in a single call.
+type PresignPostUploadBatchRequest struct {
+	Items []PresignPostUploadRequest `json:"items"`
+}
+
+// PresignPostUploadBatchResponse returns presigned URLs for each requested item.
+type PresignPostUploadBatchResponse struct {
+	Items []PresignPostUploadResponse `json:"items"`
+}
+
 // IsAllowedImageType reports if the provided content type is supported
 func IsAllowedImageType(contentType string) bool {
 	_, ok := allowedImageTypes[contentType]
