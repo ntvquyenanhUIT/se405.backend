@@ -12,6 +12,9 @@ const (
 	EventPostDeleted    = "post_deleted"
 	EventUserFollowed   = "user_followed"
 	EventUserUnfollowed = "user_unfollowed"
+	// Notification events
+	EventPostLiked     = "post_liked"
+	EventPostCommented = "post_commented"
 )
 
 // Stream names
@@ -37,6 +40,11 @@ type FeedEvent struct {
 	// Follow event (UserFollowed)
 	FollowerID int64 `json:"follower_id,omitempty"`
 	FolloweeID int64 `json:"followee_id,omitempty"`
+
+	// Notification events (PostLiked, PostCommented)
+	ActorID     int64  `json:"actor_id,omitempty"`     // Who performed the action
+	RecipientID int64  `json:"recipient_id,omitempty"` // Who receives the notification
+	CommentID   *int64 `json:"comment_id,omitempty"`   // For comment notifications
 }
 
 // NewPostCreatedEvent creates an event for when a user creates a post.
@@ -80,6 +88,32 @@ func NewUserUnfollowedEvent(followerID, followeeID int64) FeedEvent {
 		Timestamp:  time.Now().Unix(),
 		FollowerID: followerID,
 		FolloweeID: followeeID,
+	}
+}
+
+// NewPostLikedEvent creates an event for when a user likes a post.
+// Worker will create a notification for the post author.
+func NewPostLikedEvent(postID, actorID, recipientID int64) FeedEvent {
+	return FeedEvent{
+		Type:        EventPostLiked,
+		Timestamp:   time.Now().Unix(),
+		PostID:      postID,
+		ActorID:     actorID,
+		RecipientID: recipientID,
+	}
+}
+
+// NewPostCommentedEvent creates an event for when a user comments on a post.
+// Worker will create a notification for the post author.
+func NewPostCommentedEvent(postID, commentID, actorID, recipientID int64) FeedEvent {
+	cid := commentID // Need pointer
+	return FeedEvent{
+		Type:        EventPostCommented,
+		Timestamp:   time.Now().Unix(),
+		PostID:      postID,
+		CommentID:   &cid,
+		ActorID:     actorID,
+		RecipientID: recipientID,
 	}
 }
 

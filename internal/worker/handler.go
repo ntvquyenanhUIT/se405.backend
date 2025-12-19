@@ -25,11 +25,19 @@ type RecentPostsProvider interface {
 	GetRecentPostsByUser(ctx context.Context, userID int64, limit int) ([]cache.PostScore, error)
 }
 
+// NotificationCreator defines the interface for creating notifications.
+// This allows the worker to create notifications without depending on the service directly.
+type NotificationCreator interface {
+	// CreateNotification creates a notification and optionally sends push.
+	CreateNotification(ctx context.Context, userID, actorID int64, notifType string, postID, commentID *int64) error
+}
+
 // Handler processes feed events from the queue.
 type Handler struct {
 	feedCache        cache.FeedCache
 	followerProvider FollowerProvider
 	postsProvider    RecentPostsProvider
+	notifCreator     NotificationCreator // Can be nil if notifications not wired
 }
 
 // NewHandler creates a new event handler.
@@ -43,6 +51,11 @@ func NewHandler(
 		followerProvider: followerProvider,
 		postsProvider:    postsProvider,
 	}
+}
+
+// SetNotificationCreator sets the notification creator (optional, for notification events).
+func (h *Handler) SetNotificationCreator(nc NotificationCreator) {
+	h.notifCreator = nc
 }
 
 // HandleEvent routes an event to the appropriate handler based on type.
@@ -59,6 +72,11 @@ func (h *Handler) HandleEvent(ctx context.Context, event queue.FeedEvent) error 
 		err = h.handleUserFollowed(ctx, event)
 	case queue.EventUserUnfollowed:
 		err = h.handleUserUnfollowed(ctx, event)
+	// Notification events
+	case queue.EventPostLiked:
+		err = h.handlePostLiked(ctx, event)
+	case queue.EventPostCommented:
+		err = h.handlePostCommented(ctx, event)
 	default:
 		log.Printf("[Worker] Unknown event type: %s", event.Type)
 		return fmt.Errorf("unknown event type: %s", event.Type)
@@ -172,6 +190,16 @@ func (h *Handler) handleUserFollowed(ctx context.Context, event queue.FeedEvent)
 	log.Printf("[Worker] UserFollowed DONE: follower=%d backfilled=%d failed=%d",
 		event.FollowerID, len(posts), failCount)
 
+	// Create follow notification for the followee
+	if h.notifCreator != nil {
+		err := h.notifCreator.CreateNotification(ctx, event.FolloweeID, event.FollowerID, "follow", nil, nil)
+		if err != nil {
+			log.Printf("[Worker] UserFollowed: failed to create notification: %v", err)
+		} else {
+			log.Printf("[Worker] UserFollowed: notification created for followee=%d", event.FolloweeID)
+		}
+	}
+
 	return nil
 }
 
@@ -207,5 +235,53 @@ func (h *Handler) handleUserUnfollowed(ctx context.Context, event queue.FeedEven
 	log.Printf("[Worker] UserUnfollowed DONE: follower=%d removed=%d failed=%d",
 		event.FollowerID, len(posts), failCount)
 
+	return nil
+}
+
+// handlePostLiked creates a notification for the post author when someone likes their post.
+func (h *Handler) handlePostLiked(ctx context.Context, event queue.FeedEvent) error {
+	log.Printf("[Worker] PostLiked: post=%d actor=%d recipient=%d", event.PostID, event.ActorID, event.RecipientID)
+
+	if h.notifCreator == nil {
+		log.Printf("[Worker] PostLiked: notification creator not set, skipping")
+		return nil
+	}
+
+	// Don't notify if liking own post
+	if event.ActorID == event.RecipientID {
+		return nil
+	}
+
+	postID := event.PostID
+	err := h.notifCreator.CreateNotification(ctx, event.RecipientID, event.ActorID, "like", &postID, nil)
+	if err != nil {
+		return fmt.Errorf("create like notification: %w", err)
+	}
+
+	log.Printf("[Worker] PostLiked DONE: notification created")
+	return nil
+}
+
+// handlePostCommented creates a notification for the post author when someone comments.
+func (h *Handler) handlePostCommented(ctx context.Context, event queue.FeedEvent) error {
+	log.Printf("[Worker] PostCommented: post=%d actor=%d recipient=%d", event.PostID, event.ActorID, event.RecipientID)
+
+	if h.notifCreator == nil {
+		log.Printf("[Worker] PostCommented: notification creator not set, skipping")
+		return nil
+	}
+
+	// Don't notify if commenting on own post
+	if event.ActorID == event.RecipientID {
+		return nil
+	}
+
+	postID := event.PostID
+	err := h.notifCreator.CreateNotification(ctx, event.RecipientID, event.ActorID, "comment", &postID, event.CommentID)
+	if err != nil {
+		return fmt.Errorf("create comment notification: %w", err)
+	}
+
+	log.Printf("[Worker] PostCommented DONE: notification created")
 	return nil
 }

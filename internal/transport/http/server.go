@@ -57,6 +57,8 @@ func Run() error {
 	followRepo := repository.NewFollowRepository(db)
 	postRepo := repository.NewPostRepository(db)
 	commentRepo := repository.NewCommentRepository(db)
+	notifRepo := repository.NewNotificationRepository(db)
+	deviceTokenRepo := repository.NewDeviceTokenRepository(db)
 
 	// Create services (with publisher for event-driven services)
 	userService := service.NewUserService(userRepo, followRepo)
@@ -68,10 +70,25 @@ func Run() error {
 	}
 	postService := service.NewPostService(postRepo, userRepo, publisher, db)
 	feedService := service.NewFeedService(feedCache, postRepo, followRepo, userRepo)
-	commentService := service.NewCommentService(commentRepo, postRepo, userRepo, db)
+	commentService := service.NewCommentService(commentRepo, postRepo, userRepo, db, publisher)
+
+	// Initialize FCM client for push notifications (optional - nil if credentials not set)
+	var fcmClient *service.FCMClient
+	if cfg.FirebaseProjectID != "" && cfg.FirebaseClientEmail != "" && cfg.FirebasePrivateKey != "" {
+		fcmClient, err = service.NewFCMClient(ctx, cfg.FirebaseProjectID, cfg.FirebaseClientEmail, cfg.FirebasePrivateKey)
+		if err != nil {
+			log.Printf("[WARN] Failed to initialize FCM client: %v (push notifications disabled)", err)
+		} else {
+			log.Println("FCM client initialized - push notifications enabled")
+		}
+	} else {
+		log.Println("Firebase credentials not set - push notifications disabled")
+	}
+	notifService := service.NewNotificationService(notifRepo, deviceTokenRepo, userRepo, fcmClient)
 
 	// Create worker components
 	workerHandler := worker.NewHandler(feedCache, followRepo, postRepo)
+	workerHandler.SetNotificationCreator(notifService) // Enable notification handling
 	workerManager := worker.NewManager(consumer, workerHandler, worker.DefaultManagerConfig())
 
 	// Start worker goroutines
@@ -88,17 +105,19 @@ func Run() error {
 	postHandler := handler.NewPostHandler(postService)
 	mediaHandler := handler.NewMediaHandler(mediaService)
 	commentHandler := handler.NewCommentHandler(commentService)
+	notifHandler := handler.NewNotificationHandler(notifService)
 
 	// Create router with dependencies
 	router := NewRouter(RouterConfig{
-		AuthHandler:    authHandler,
-		UserHandler:    userHandler,
-		FollowHandler:  followHandler,
-		FeedHandler:    feedHandler,
-		PostHandler:    postHandler,
-		MediaHandler:   mediaHandler,
-		CommentHandler: commentHandler,
-		JWTSecret:      cfg.JWTSecret,
+		AuthHandler:         authHandler,
+		UserHandler:         userHandler,
+		FollowHandler:       followHandler,
+		FeedHandler:         feedHandler,
+		PostHandler:         postHandler,
+		MediaHandler:        mediaHandler,
+		CommentHandler:      commentHandler,
+		NotificationHandler: notifHandler,
+		JWTSecret:           cfg.JWTSecret,
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)

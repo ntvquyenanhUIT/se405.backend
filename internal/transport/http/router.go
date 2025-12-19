@@ -13,14 +13,15 @@ import (
 
 // RouterConfig holds the dependencies needed to create routes
 type RouterConfig struct {
-	AuthHandler    *handler.AuthHandler
-	UserHandler    *handler.UserHandler
-	FollowHandler  *handler.FollowHandler
-	FeedHandler    *handler.FeedHandler
-	PostHandler    *handler.PostHandler
-	MediaHandler   *handler.MediaHandler
-	CommentHandler *handler.CommentHandler
-	JWTSecret      string
+	AuthHandler         *handler.AuthHandler
+	UserHandler         *handler.UserHandler
+	FollowHandler       *handler.FollowHandler
+	FeedHandler         *handler.FeedHandler
+	PostHandler         *handler.PostHandler
+	MediaHandler        *handler.MediaHandler
+	CommentHandler      *handler.CommentHandler
+	NotificationHandler *handler.NotificationHandler
+	JWTSecret           string
 }
 
 // NewRouter creates and configures a new Chi router with all route groups
@@ -92,8 +93,18 @@ func NewRouter(cfg RouterConfig) chi.Router {
 		r.Post("/media/posts/presign", cfg.MediaHandler.PresignPostUpload)
 		r.Post("/media/posts/presign/batch", cfg.MediaHandler.PresignPostUploadBatch)
 
+		// Notification endpoints
 		r.Route("/notifications", func(r chi.Router) {
-			// Notification endpoints (to be implemented)
+			r.Get("/", cfg.NotificationHandler.List)
+			r.Patch("/read", cfg.NotificationHandler.MarkRead)
+			r.Post("/read-all", cfg.NotificationHandler.MarkAllRead)
+			r.Get("/unread-count", cfg.NotificationHandler.GetUnreadCount)
+		})
+
+		// Device token endpoints (for push notifications)
+		r.Route("/devices", func(r chi.Router) {
+			r.Post("/token", cfg.NotificationHandler.RegisterToken)
+			r.Delete("/token", cfg.NotificationHandler.RemoveToken)
 		})
 	})
 

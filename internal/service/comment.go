@@ -8,6 +8,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"iamstagram_22520060/internal/model"
+	"iamstagram_22520060/internal/queue"
 	"iamstagram_22520060/internal/repository"
 )
 
@@ -16,6 +17,7 @@ type CommentService struct {
 	postRepo    repository.PostRepository
 	userRepo    repository.UserRepository
 	db          *sqlx.DB
+	publisher   queue.Publisher
 }
 
 func NewCommentService(
@@ -23,12 +25,14 @@ func NewCommentService(
 	postRepo repository.PostRepository,
 	userRepo repository.UserRepository,
 	db *sqlx.DB,
+	publisher queue.Publisher,
 ) *CommentService {
 	return &CommentService{
 		commentRepo: commentRepo,
 		postRepo:    postRepo,
 		userRepo:    userRepo,
 		db:          db,
+		publisher:   publisher,
 	}
 }
 
@@ -108,6 +112,18 @@ func (s *CommentService) Create(ctx context.Context, postID, userID int64, req m
 	}
 
 	log.Printf("[CommentService] User %d commented on post %d", userID, postID)
+
+	// Publish notification event (after commit, best-effort)
+	if s.publisher != nil {
+		authorID, err := s.postRepo.GetAuthorID(ctx, postID)
+		if err == nil && authorID != userID {
+			event := queue.NewPostCommentedEvent(postID, comment.ID, userID, authorID)
+			if _, err := s.publisher.Publish(ctx, queue.StreamFeed, event); err != nil {
+				log.Printf("[CommentService] Failed to publish PostCommented event: %v", err)
+			}
+		}
+	}
+
 	return comment, nil
 }
 

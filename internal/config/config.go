@@ -32,6 +32,11 @@ type Config struct {
 	DefaultAvatarKey string
 
 	RedisURL string
+
+	// Firebase (FCM Push Notifications)
+	FirebaseProjectID   string
+	FirebaseClientEmail string
+	FirebasePrivateKey  string
 }
 
 func LoadConfig() (*Config, error) {
@@ -93,5 +98,9 @@ func LoadConfig() (*Config, error) {
 		DefaultAvatarKey: defaultAvatarKey,
 
 		RedisURL: redisURL,
+
+		FirebaseProjectID:   os.Getenv("FIREBASE_PROJECT_ID"),
+		FirebaseClientEmail: os.Getenv("FIREBASE_CLIENT_EMAIL"),
+		FirebasePrivateKey:  os.Getenv("FIREBASE_PRIVATE_KEY"),
 	}, nil
 }

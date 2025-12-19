@@ -189,6 +189,18 @@ func (s *PostService) Like(ctx context.Context, postID, userID int64) error {
 	}
 
 	log.Printf("[PostService] User %d liked post %d", userID, postID)
+
+	// Publish notification event (after commit, best-effort)
+	if s.publisher != nil {
+		authorID, err := s.postRepo.GetAuthorID(ctx, postID)
+		if err == nil && authorID != userID {
+			event := queue.NewPostLikedEvent(postID, userID, authorID)
+			if _, err := s.publisher.Publish(ctx, queue.StreamFeed, event); err != nil {
+				log.Printf("[PostService] Failed to publish PostLiked event: %v", err)
+			}
+		}
+	}
+
 	return nil
 }
 
