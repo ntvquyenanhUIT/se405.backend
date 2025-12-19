@@ -335,6 +335,140 @@ func (r *postRepository) CheckLikes(ctx context.Context, userID int64, postIDs [
 	return result, nil
 }
 
+// Like inserts a like record. Returns ErrAlreadyLiked if duplicate.
+func (r *postRepository) Like(ctx context.Context, tx *sqlx.Tx, postID, userID int64) error {
+	query := `INSERT INTO post_likes (post_id, user_id) VALUES ($1, $2)`
+	_, err := tx.ExecContext(ctx, query, postID, userID)
+	if err != nil {
+		// Check for unique constraint violation
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			return model.ErrAlreadyLiked
+		}
+		return fmt.Errorf("insert like: %w", err)
+	}
+	return nil
+}
+
+// Unlike deletes a like record. Returns ErrNotLiked if not found.
+func (r *postRepository) Unlike(ctx context.Context, tx *sqlx.Tx, postID, userID int64) error {
+	query := `DELETE FROM post_likes WHERE post_id = $1 AND user_id = $2`
+	result, err := tx.ExecContext(ctx, query, postID, userID)
+	if err != nil {
+		return fmt.Errorf("delete like: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return model.ErrNotLiked
+	}
+	return nil
+}
+
+// GetPostLikers returns paginated users who liked a post.
+func (r *postRepository) GetPostLikers(ctx context.Context, postID int64, cursor *string, limit int) ([]model.UserSummary, *string, error) {
+	var query string
+	var args []interface{}
+
+	if cursor == nil {
+		query = `
+			SELECT u.id, u.username, u.display_name, u.avatar_url
+			FROM post_likes pl
+			JOIN users u ON u.id = pl.user_id
+			WHERE pl.post_id = $1
+			ORDER BY pl.created_at DESC, pl.id DESC
+			LIMIT $2
+		`
+		args = []interface{}{postID, limit + 1}
+	} else {
+		ts, id, err := parseCursor(*cursor)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid cursor: %w", err)
+		}
+		query = `
+			SELECT u.id, u.username, u.display_name, u.avatar_url
+			FROM post_likes pl
+			JOIN users u ON u.id = pl.user_id
+			WHERE pl.post_id = $1 AND (pl.created_at, pl.id) < ($2, $3)
+			ORDER BY pl.created_at DESC, pl.id DESC
+			LIMIT $4
+		`
+		args = []interface{}{postID, ts, id, limit + 1}
+	}
+
+	var users []model.UserSummary
+	err := r.db.SelectContext(ctx, &users, query, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get post likers: %w", err)
+	}
+
+	// Check for more and build cursor
+	var nextCursor *string
+	if len(users) > limit {
+		users = users[:limit]
+		// Need to get the like's created_at and id for cursor
+		var likeInfo struct {
+			ID        int64     `db:"id"`
+			CreatedAt time.Time `db:"created_at"`
+		}
+		err := r.db.GetContext(ctx, &likeInfo, `
+			SELECT id, created_at FROM post_likes 
+			WHERE post_id = $1 AND user_id = $2
+		`, postID, users[len(users)-1].ID)
+		if err == nil {
+			c := formatCursor(likeInfo.CreatedAt, likeInfo.ID)
+			nextCursor = &c
+		}
+	}
+
+	return users, nextCursor, nil
+}
+
+// IncrementLikeCount atomically updates the like_count on a post.
+func (r *postRepository) IncrementLikeCount(ctx context.Context, tx *sqlx.Tx, postID int64, delta int) error {
+	query := `UPDATE posts SET like_count = like_count + $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
+	result, err := tx.ExecContext(ctx, query, delta, postID)
+	if err != nil {
+		return fmt.Errorf("update like count: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return model.ErrPostNotFound
+	}
+	return nil
+}
+
+// IncrementCommentCount atomically updates the comment_count on a post.
+func (r *postRepository) IncrementCommentCount(ctx context.Context, tx *sqlx.Tx, postID int64, delta int) error {
+	query := `UPDATE posts SET comment_count = comment_count + $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
+	result, err := tx.ExecContext(ctx, query, delta, postID)
+	if err != nil {
+		return fmt.Errorf("update comment count: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return model.ErrPostNotFound
+	}
+	return nil
+}
+
+// Exists checks if a post exists and is not deleted.
+func (r *postRepository) Exists(ctx context.Context, postID int64) (bool, error) {
+	var exists bool
+	err := r.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM posts WHERE id = $1 AND deleted_at IS NULL)`, postID)
+	if err != nil {
+		return false, fmt.Errorf("check post exists: %w", err)
+	}
+	return exists, nil
+}
+
 // Helper: fetch media for multiple posts in one query
 func (r *postRepository) getPostMedia(ctx context.Context, postIDs []int64) (map[int64][]model.PostMedia, error) {
 	if len(postIDs) == 0 {
@@ -384,3 +518,4 @@ func parseCursor(cursor string) (time.Time, int64, error) {
 func formatCursor(t time.Time, id int64) string {
 	return fmt.Sprintf("%d:%d", id, t.Unix())
 }
+

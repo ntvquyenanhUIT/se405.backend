@@ -13,13 +13,14 @@ import (
 
 // RouterConfig holds the dependencies needed to create routes
 type RouterConfig struct {
-	AuthHandler   *handler.AuthHandler
-	UserHandler   *handler.UserHandler
-	FollowHandler *handler.FollowHandler
-	FeedHandler   *handler.FeedHandler
-	PostHandler   *handler.PostHandler
-	MediaHandler  *handler.MediaHandler
-	JWTSecret     string
+	AuthHandler    *handler.AuthHandler
+	UserHandler    *handler.UserHandler
+	FollowHandler  *handler.FollowHandler
+	FeedHandler    *handler.FeedHandler
+	PostHandler    *handler.PostHandler
+	MediaHandler   *handler.MediaHandler
+	CommentHandler *handler.CommentHandler
+	JWTSecret      string
 }
 
 // NewRouter creates and configures a new Chi router with all route groups
@@ -76,6 +77,17 @@ func NewRouter(cfg RouterConfig) chi.Router {
 		r.Post("/posts", cfg.PostHandler.Create)
 		r.Delete("/posts/{id}", cfg.PostHandler.Delete)
 
+		// Like endpoints
+		r.Post("/posts/{id}/likes", cfg.PostHandler.Like)
+		r.Delete("/posts/{id}/likes", cfg.PostHandler.Unlike)
+		r.Get("/posts/{id}/likes", cfg.PostHandler.GetLikes)
+
+		// Comment endpoints
+		r.Post("/posts/{id}/comments", cfg.CommentHandler.Create)
+		r.Patch("/posts/{id}/comments/{commentId}", cfg.CommentHandler.Update)
+		r.Delete("/posts/{id}/comments/{commentId}", cfg.CommentHandler.Delete)
+		r.Get("/posts/{id}/comments", cfg.CommentHandler.List)
+
 		// Media endpoints (direct-to-R2 uploads)
 		r.Post("/media/posts/presign", cfg.MediaHandler.PresignPostUpload)
 		r.Post("/media/posts/presign/batch", cfg.MediaHandler.PresignPostUploadBatch)
@@ -87,3 +99,4 @@ func NewRouter(cfg RouterConfig) chi.Router {
 
 	return r
 }
+

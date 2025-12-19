@@ -159,3 +159,114 @@ func (h *PostHandler) GetUserPosts(w http.ResponseWriter, r *http.Request) {
 
 	httputil.WriteJSON(w, http.StatusOK, posts)
 }
+
+// Like handles POST /posts/:id/likes
+// Likes a post for the authenticated user.
+func (h *PostHandler) Like(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteUnauthorized(w, "Authentication required")
+		return
+	}
+
+	postIDStr := chi.URLParam(r, "id")
+	postID, err := strconv.ParseInt(postIDStr, 10, 64)
+	if err != nil {
+		httputil.WriteBadRequest(w, "Invalid post ID")
+		return
+	}
+
+	err = h.postService.Like(r.Context(), postID, userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, model.ErrPostNotFound):
+			httputil.WriteNotFound(w, "Post not found")
+		case errors.Is(err, model.ErrAlreadyLiked):
+			httputil.WriteConflict(w, "Already liked this post")
+		default:
+			log.Printf("[ERROR] Like post handler: user=%d post=%d err=%v", userID, postID, err)
+			httputil.WriteInternalError(w, "Failed to like post")
+		}
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusCreated, map[string]string{
+		"message": "Post liked successfully",
+	})
+}
+
+// Unlike handles DELETE /posts/:id/likes
+// Removes a like from a post for the authenticated user.
+func (h *PostHandler) Unlike(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteUnauthorized(w, "Authentication required")
+		return
+	}
+
+	postIDStr := chi.URLParam(r, "id")
+	postID, err := strconv.ParseInt(postIDStr, 10, 64)
+	if err != nil {
+		httputil.WriteBadRequest(w, "Invalid post ID")
+		return
+	}
+
+	err = h.postService.Unlike(r.Context(), postID, userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, model.ErrNotLiked):
+			httputil.WriteNotFound(w, "Have not liked this post")
+		case errors.Is(err, model.ErrPostNotFound):
+			httputil.WriteNotFound(w, "Post not found")
+		default:
+			log.Printf("[ERROR] Unlike post handler: user=%d post=%d err=%v", userID, postID, err)
+			httputil.WriteInternalError(w, "Failed to unlike post")
+		}
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{
+		"message": "Post unliked successfully",
+	})
+}
+
+// GetLikes handles GET /posts/:id/likes
+// Returns paginated list of users who liked a post.
+func (h *PostHandler) GetLikes(w http.ResponseWriter, r *http.Request) {
+	postIDStr := chi.URLParam(r, "id")
+	postID, err := strconv.ParseInt(postIDStr, 10, 64)
+	if err != nil {
+		httputil.WriteBadRequest(w, "Invalid post ID")
+		return
+	}
+
+	// Parse query params
+	var cursor *string
+	if c := r.URL.Query().Get("cursor"); c != "" {
+		cursor = &c
+	}
+
+	limit := 10 // default
+	if l := r.URL.Query().Get("limit"); l != "" {
+		parsed, err := strconv.Atoi(l)
+		if err != nil || parsed <= 0 {
+			httputil.WriteBadRequest(w, "Invalid limit parameter")
+			return
+		}
+		limit = parsed
+	}
+
+	likers, err := h.postService.GetPostLikers(r.Context(), postID, cursor, limit)
+	if err != nil {
+		if errors.Is(err, model.ErrPostNotFound) {
+			httputil.WriteNotFound(w, "Post not found")
+			return
+		}
+		log.Printf("[ERROR] Get post likers handler: post=%d err=%v", postID, err)
+		httputil.WriteInternalError(w, "Failed to get post likers")
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, likers)
+}
+

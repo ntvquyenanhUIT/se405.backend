@@ -80,4 +80,6 @@ var (
 	ErrTooManyMedia    = errors.New("too many media items")
 	ErrCaptionTooLong  = errors.New("caption too long")
 	ErrInvalidMediaURL = errors.New("invalid media URL")
+	ErrAlreadyLiked    = errors.New("already liked this post")
+	ErrNotLiked        = errors.New("have not liked this post")
 )

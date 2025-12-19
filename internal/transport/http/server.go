@@ -56,6 +56,7 @@ func Run() error {
 	refreshTokenRepo := repository.NewRefreshTokenRepository(db)
 	followRepo := repository.NewFollowRepository(db)
 	postRepo := repository.NewPostRepository(db)
+	commentRepo := repository.NewCommentRepository(db)
 
 	// Create services (with publisher for event-driven services)
 	userService := service.NewUserService(userRepo, followRepo)
@@ -65,8 +66,9 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize media service: %w", err)
 	}
-	postService := service.NewPostService(postRepo, userRepo, publisher)
+	postService := service.NewPostService(postRepo, userRepo, publisher, db)
 	feedService := service.NewFeedService(feedCache, postRepo, followRepo, userRepo)
+	commentService := service.NewCommentService(commentRepo, postRepo, userRepo, db)
 
 	// Create worker components
 	workerHandler := worker.NewHandler(feedCache, followRepo, postRepo)
@@ -85,16 +87,18 @@ func Run() error {
 	feedHandler := handler.NewFeedHandler(feedService)
 	postHandler := handler.NewPostHandler(postService)
 	mediaHandler := handler.NewMediaHandler(mediaService)
+	commentHandler := handler.NewCommentHandler(commentService)
 
 	// Create router with dependencies
 	router := NewRouter(RouterConfig{
-		AuthHandler:   authHandler,
-		UserHandler:   userHandler,
-		FollowHandler: followHandler,
-		FeedHandler:   feedHandler,
-		PostHandler:   postHandler,
-		MediaHandler:  mediaHandler,
-		JWTSecret:     cfg.JWTSecret,
+		AuthHandler:    authHandler,
+		UserHandler:    userHandler,
+		FollowHandler:  followHandler,
+		FeedHandler:    feedHandler,
+		PostHandler:    postHandler,
+		MediaHandler:   mediaHandler,
+		CommentHandler: commentHandler,
+		JWTSecret:      cfg.JWTSecret,
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)
@@ -117,6 +121,12 @@ func Run() error {
 	log.Printf("  POST   /posts                 - Create post (protected)")
 	log.Printf("  GET    /posts/:id             - Get post (optional auth)")
 	log.Printf("  DELETE /posts/:id             - Delete post (protected)")
+	log.Printf("  POST   /posts/:id/likes       - Like post (protected)")
+	log.Printf("  DELETE /posts/:id/likes       - Unlike post (protected)")
+	log.Printf("  GET    /posts/:id/likes       - Get post likers (protected)")
+	log.Printf("  POST   /posts/:id/comments    - Create comment (protected)")
+	log.Printf("  DELETE /posts/:id/comments/:id- Delete comment (protected)")
+	log.Printf("  GET    /posts/:id/comments    - Get comments (protected)")
 
 	// Setup graceful shutdown
 	server := &stdhttp.Server{

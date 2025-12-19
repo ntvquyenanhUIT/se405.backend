@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/jmoiron/sqlx"
+
 	"iamstagram_22520060/internal/model"
 	"iamstagram_22520060/internal/queue"
 	"iamstagram_22520060/internal/repository"
@@ -14,17 +16,20 @@ type PostService struct {
 	postRepo  repository.PostRepository
 	userRepo  repository.UserRepository
 	publisher queue.Publisher
+	db        *sqlx.DB
 }
 
 func NewPostService(
 	postRepo repository.PostRepository,
 	userRepo repository.UserRepository,
 	publisher queue.Publisher,
+	db *sqlx.DB,
 ) *PostService {
 	return &PostService{
 		postRepo:  postRepo,
 		userRepo:  userRepo,
 		publisher: publisher,
+		db:        db,
 	}
 }
 
@@ -151,3 +156,102 @@ func (s *PostService) GetUserPosts(ctx context.Context, userID int64, cursor *st
 		HasMore:    hasMore,
 	}, nil
 }
+
+// Like adds a like to a post. Uses transaction: insert like + increment counter.
+func (s *PostService) Like(ctx context.Context, postID, userID int64) error {
+	// Verify post exists first
+	exists, err := s.postRepo.Exists(ctx, postID)
+	if err != nil {
+		return fmt.Errorf("check post exists: %w", err)
+	}
+	if !exists {
+		return model.ErrPostNotFound
+	}
+
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Insert like (fails if already liked)
+	if err := s.postRepo.Like(ctx, tx, postID, userID); err != nil {
+		return err
+	}
+
+	// Increment like count
+	if err := s.postRepo.IncrementLikeCount(ctx, tx, postID, 1); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	log.Printf("[PostService] User %d liked post %d", userID, postID)
+	return nil
+}
+
+// Unlike removes a like from a post. Uses transaction: delete like + decrement counter.
+func (s *PostService) Unlike(ctx context.Context, postID, userID int64) error {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Delete like (fails if not liked)
+	if err := s.postRepo.Unlike(ctx, tx, postID, userID); err != nil {
+		return err
+	}
+
+	// Decrement like count
+	if err := s.postRepo.IncrementLikeCount(ctx, tx, postID, -1); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	log.Printf("[PostService] User %d unliked post %d", userID, postID)
+	return nil
+}
+
+// GetPostLikers returns paginated list of users who liked a post.
+func (s *PostService) GetPostLikers(ctx context.Context, postID int64, cursor *string, limit int) (*model.LikersListResponse, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	// Verify post exists
+	exists, err := s.postRepo.Exists(ctx, postID)
+	if err != nil {
+		return nil, fmt.Errorf("check post exists: %w", err)
+	}
+	if !exists {
+		return nil, model.ErrPostNotFound
+	}
+
+	users, nextCursor, err := s.postRepo.GetPostLikers(ctx, postID, cursor, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get post likers: %w", err)
+	}
+
+	hasMore := nextCursor != nil
+
+	var finalCursor *string
+	if hasMore {
+		finalCursor = nextCursor
+	}
+
+	return &model.LikersListResponse{
+		Users:      users,
+		NextCursor: finalCursor,
+		HasMore:    hasMore,
+	}, nil
+}
+

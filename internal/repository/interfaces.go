@@ -51,4 +51,20 @@ type PostRepository interface {
 	GetAuthorID(ctx context.Context, postID int64) (int64, error)
 	// CheckLikes checks which posts the user has liked
 	CheckLikes(ctx context.Context, userID int64, postIDs []int64) (map[int64]bool, error)
+	// Like methods
+	Like(ctx context.Context, tx *sqlx.Tx, postID, userID int64) error
+	Unlike(ctx context.Context, tx *sqlx.Tx, postID, userID int64) error
+	GetPostLikers(ctx context.Context, postID int64, cursor *string, limit int) ([]model.UserSummary, *string, error)
+	IncrementLikeCount(ctx context.Context, tx *sqlx.Tx, postID int64, delta int) error
+	IncrementCommentCount(ctx context.Context, tx *sqlx.Tx, postID int64, delta int) error
+	// Exists checks if a post exists (not deleted)
+	Exists(ctx context.Context, postID int64) (bool, error)
+}
+
+type CommentRepository interface {
+	Create(ctx context.Context, tx *sqlx.Tx, postID, userID int64, content string, parentID *int64) (*model.Comment, error)
+	Update(ctx context.Context, commentID, userID int64, content string) (*model.Comment, error)
+	Delete(ctx context.Context, tx *sqlx.Tx, commentID, userID int64) (postID int64, err error)
+	GetByPostID(ctx context.Context, postID int64, cursor *string, limit int) ([]model.Comment, *string, error)
+	GetByID(ctx context.Context, commentID int64) (*model.Comment, error)
 }
