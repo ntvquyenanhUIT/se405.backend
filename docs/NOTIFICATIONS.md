@@ -1,8 +1,8 @@
 # Notifications & Push Notifications API
 
-Tài liệu này mô tả **toàn bộ các endpoint liên quan đến Notifications** trong backend, bao gồm cả flow đăng ký **device token** cho push notifications (FCM).
+Tài liệu này mô tả **toàn bộ các endpoint liên quan đến Notifications** trong backend, sử dụng **Expo Push** cho push notifications.
 
-Mục tiêu: đủ rõ ràng để team frontend có thể implement theo.
+Mục tiêu: đủ rõ ràng để team frontend (React Native + Expo) có thể implement theo.
 
 ---
 
@@ -229,12 +229,12 @@ Authorization: Bearer <access_token>
 
 ### POST /devices/token
 
-Đăng ký FCM device token để nhận push notifications.
+Đăng ký **Expo Push Token** để nhận push notifications.
 
 **Khi nào gọi:**
 - Mỗi lần app launch (token có thể refresh bất cứ lúc nào)
 - Sau khi login thành công
-- Khi FCM SDK báo token mới (onTokenRefresh callback)
+- Khi Expo SDK báo token mới
 
 **Auth:** Bắt buộc
 
@@ -247,14 +247,14 @@ Authorization: Bearer <access_token>
 
 ```json
 {
-  "token": "fcm-device-token-string-here",
-  "platform": "ios"
+  "token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
+  "platform": "expo"
 }
 ```
 
 Fields:
-- `token` (required): FCM token từ Firebase SDK
-- `platform` (optional): `"ios"` hoặc `"android"`, default `"android"`
+- `token` (required): Expo Push Token từ `expo-notifications`
+- `platform` (optional): `"expo"`, `"ios"`, or `"android"`, default `"expo"`
 
 #### Response (200 OK)
 ```json
@@ -285,7 +285,7 @@ Content-Type: application/json
 
 ```json
 {
-  "token": "fcm-device-token-string-here"
+  "token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
 }
 ```
 
@@ -317,47 +317,109 @@ Content-Type: application/json
 Push notifications sẽ hiển thị:
 - **Title**: "New Follower", "New Like", "New Comment"
 - **Body**: "username started following you", "username liked your post", etc.
+- **Data**: `{ type, actor_id, post_id }` cho navigation
 
 ---
 
-## Frontend Implementation Notes
+## Frontend Implementation Notes (Expo)
 
-### 1. FCM Setup (React Native)
+### 1. Setup (Expo + React Native)
 
 ```bash
-npm install @react-native-firebase/app @react-native-firebase/messaging
+npx expo install expo-notifications expo-device
 ```
 
 ### 2. Register Token Flow
 
 ```ts
-import messaging from '@react-native-firebase/messaging';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import { Platform } from 'react-native';
 
 // On app launch (after login)
-async function registerDeviceToken() {
+async function registerForPushNotifications() {
+  if (!Device.isDevice) {
+    console.log('Push notifications only work on physical devices');
+    return;
+  }
+
   // Request permission
-  const authStatus = await messaging().requestPermission();
-  const enabled = authStatus === messaging.AuthorizationStatus.AUTHORIZED;
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
   
-  if (enabled) {
-    // Get FCM token
-    const token = await messaging().getToken();
-    
-    // Send to backend
-    await api.post('/devices/token', {
-      token,
-      platform: Platform.OS // 'ios' or 'android'
+  if (existingStatus !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+  
+  if (finalStatus !== 'granted') {
+    console.log('Failed to get push token permissions');
+    return;
+  }
+
+  // Get Expo push token
+  const token = (await Notifications.getExpoPushTokenAsync()).data;
+  console.log('Expo Push Token:', token);
+  // Token looks like: "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+
+  // Send to backend
+  await api.post('/devices/token', {
+    token,
+    platform: 'expo'
+  });
+
+  // For Android, set notification channel
+  if (Platform.OS === 'android') {
+    Notifications.setNotificationChannelAsync('default', {
+      name: 'default',
+      importance: Notifications.AndroidImportance.MAX,
     });
   }
 }
-
-// Listen for token refresh
-messaging().onTokenRefresh(async (token) => {
-  await api.post('/devices/token', { token, platform: Platform.OS });
-});
 ```
 
-### 3. Polling for In-App Notifications
+### 3. Handle Incoming Notifications
+
+```ts
+import * as Notifications from 'expo-notifications';
+
+// Configure how notifications are displayed when app is in foreground
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
+
+// Listen for notifications when app is open
+useEffect(() => {
+  const subscription = Notifications.addNotificationReceivedListener(notification => {
+    console.log('Notification received:', notification);
+    // Optionally refresh notification list
+    fetchNotifications();
+  });
+
+  return () => subscription.remove();
+}, []);
+
+// Handle notification tap (deep linking)
+useEffect(() => {
+  const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+    const data = response.notification.request.content.data;
+    
+    if (data.type === 'follow') {
+      navigation.navigate('Profile', { userId: data.actor_id });
+    } else if (data.post_id) {
+      navigation.navigate('Post', { postId: data.post_id });
+    }
+  });
+
+  return () => subscription.remove();
+}, []);
+```
+
+### 4. Polling for In-App Notifications
 
 ```ts
 // Poll every 30 seconds when app is in foreground
@@ -375,25 +437,13 @@ useFocusEffect(() => {
 });
 ```
 
-### 4. Badge Count
-
-```ts
-// Update app icon badge
-import PushNotificationIOS from '@react-native-community/push-notification-ios';
-
-const updateBadge = (count: number) => {
-  if (Platform.OS === 'ios') {
-    PushNotificationIOS.setApplicationIconBadgeNumber(count);
-  }
-  // Android badge handling varies by launcher
-};
-```
-
 ### 5. Logout Flow
 
 ```ts
+import * as Notifications from 'expo-notifications';
+
 async function logout() {
-  const token = await messaging().getToken();
+  const token = (await Notifications.getExpoPushTokenAsync()).data;
   
   // Remove device token from backend
   await api.delete('/devices/token', { data: { token } });
@@ -408,12 +458,14 @@ async function logout() {
 
 ---
 
-## Ghi chú quan trọng / giới hạn hiện tại
+## Ghi chú quan trọng
 
-1. **FCM credentials chưa được configure** - Backend hiện đang khởi tạo FCM client với `nil`. Cần set Firebase credentials trong `.env` để push hoạt động.
+1. **Expo Push - No setup required!** - Backend sử dụng Expo Push API, không cần Firebase hay Apple Developer account. Works with Expo Go!
 
-2. **Aggregation logic** - Likes/comments được group theo `post_id`. Không có time-window (tất cả likes vào cùng 1 post đều group chung).
+2. **Physical device required** - Push notifications không hoạt động trên simulator/emulator.
 
-3. **Multi-device support** - Backend hỗ trợ nhiều thiết bị cùng 1 user. Push sẽ gửi đến TẤT CẢ devices đã đăng ký.
+3. **Aggregation logic** - Likes/comments được group theo `post_id`. Không có time-window (tất cả likes vào cùng 1 post đều group chung).
 
-4. **Read status** - Aggregated notification `is_read = true` chỉ khi TẤT CẢ notifications trong group đã đọc.
+4. **Multi-device support** - Backend hỗ trợ nhiều thiết bị cùng 1 user. Push sẽ gửi đến TẤT CẢ devices đã đăng ký.
+
+5. **Read status** - Aggregated notification `is_read = true` chỉ khi TẤT CẢ notifications trong group đã đọc.

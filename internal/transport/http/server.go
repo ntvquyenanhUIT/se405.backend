@@ -72,19 +72,11 @@ func Run() error {
 	feedService := service.NewFeedService(feedCache, postRepo, followRepo, userRepo)
 	commentService := service.NewCommentService(commentRepo, postRepo, userRepo, db, publisher)
 
-	// Initialize FCM client for push notifications (optional - nil if credentials not set)
-	var fcmClient *service.FCMClient
-	if cfg.FirebaseProjectID != "" && cfg.FirebaseClientEmail != "" && cfg.FirebasePrivateKey != "" {
-		fcmClient, err = service.NewFCMClient(ctx, cfg.FirebaseProjectID, cfg.FirebaseClientEmail, cfg.FirebasePrivateKey)
-		if err != nil {
-			log.Printf("[WARN] Failed to initialize FCM client: %v (push notifications disabled)", err)
-		} else {
-			log.Println("FCM client initialized - push notifications enabled")
-		}
-	} else {
-		log.Println("Firebase credentials not set - push notifications disabled")
-	}
-	notifService := service.NewNotificationService(notifRepo, deviceTokenRepo, userRepo, fcmClient)
+	// Initialize Expo Push client for push notifications
+	// Unlike FCM, Expo Push doesn't require any credentials!
+	expoPushClient := service.NewExpoPushClient()
+	log.Println("Expo Push client initialized - push notifications enabled")
+	notifService := service.NewNotificationService(notifRepo, deviceTokenRepo, userRepo, expoPushClient)
 
 	// Create worker components
 	workerHandler := worker.NewHandler(feedCache, followRepo, postRepo)

@@ -9,25 +9,25 @@ import (
 )
 
 // NotificationService handles notification-related business logic.
-// It manages both polling (in-app) and push (FCM) notifications.
+// It manages both polling (in-app) and push (Expo Push) notifications.
 type NotificationService struct {
 	notifRepo repository.NotificationRepository
 	tokenRepo repository.DeviceTokenRepository
 	userRepo  repository.UserRepository
-	fcm       *FCMClient // Can be nil if FCM is not configured
+	expoPush  *ExpoPushClient // Can be nil if push not configured
 }
 
 func NewNotificationService(
 	notifRepo repository.NotificationRepository,
 	tokenRepo repository.DeviceTokenRepository,
 	userRepo repository.UserRepository,
-	fcm *FCMClient,
+	expoPush *ExpoPushClient,
 ) *NotificationService {
 	return &NotificationService{
 		notifRepo: notifRepo,
 		tokenRepo: tokenRepo,
 		userRepo:  userRepo,
-		fcm:       fcm,
+		expoPush:  expoPush,
 	}
 }
 
@@ -80,17 +80,18 @@ func (s *NotificationService) GetUnreadCount(ctx context.Context, userID int64) 
 	return s.notifRepo.GetUnreadCount(ctx, userID)
 }
 
-// RegisterDeviceToken stores or updates a device's FCM token.
+// RegisterDeviceToken stores or updates a device's Expo push token.
 // This is called when:
 // - User logs in on a new device
-// - FCM token is refreshed by the mobile app
+// - Expo push token is refreshed by the mobile app
 //
 // The token is unique, so if the same token exists for a different user,
 // it will be reassigned to the current user (device changed hands).
 func (s *NotificationService) RegisterDeviceToken(ctx context.Context, userID int64, token, platform string) error {
-	// Validate platform
-	if platform != model.PlatformIOS && platform != model.PlatformAndroid {
-		platform = model.PlatformAndroid // Default to Android
+	// For Expo, platform can be "expo", "ios", or "android"
+	// We'll store it as-is for reference
+	if platform == "" {
+		platform = "expo"
 	}
 
 	return s.tokenRepo.Upsert(ctx, userID, token, platform)
@@ -120,8 +121,8 @@ func (s *NotificationService) CreateNotification(
 	}
 
 	// Send push notification (async, don't block)
-	if s.fcm != nil {
-		go s.sendPushNotification(context.Background(), userID, actorID, notifType)
+	if s.expoPush != nil {
+		go s.sendPushNotification(context.Background(), userID, actorID, notifType, postID)
 	}
 
 	return nil
@@ -129,7 +130,7 @@ func (s *NotificationService) CreateNotification(
 
 // sendPushNotification sends a push notification to all of the user's devices.
 // This is called asynchronously - errors are logged but don't fail the request.
-func (s *NotificationService) sendPushNotification(ctx context.Context, userID, actorID int64, notifType string) {
+func (s *NotificationService) sendPushNotification(ctx context.Context, userID, actorID int64, notifType string, postID *int64) {
 	// Get device tokens for the recipient
 	tokens, err := s.tokenRepo.GetByUserID(ctx, userID)
 	if err != nil {
@@ -157,8 +158,17 @@ func (s *NotificationService) sendPushNotification(ctx context.Context, userID, 
 		tokenStrings[i] = t.Token
 	}
 
-	// Send push notification
-	if err := s.fcm.SendToTokens(ctx, tokenStrings, title, body, nil); err != nil {
+	// Build data payload for navigation
+	data := map[string]interface{}{
+		"type":     notifType,
+		"actor_id": actorID,
+	}
+	if postID != nil {
+		data["post_id"] = *postID
+	}
+
+	// Send push notification via Expo
+	if err := s.expoPush.SendToTokens(tokenStrings, title, body, data); err != nil {
 		log.Printf("[NotificationService] Failed to send push to user %d: %v", userID, err)
 	}
 }
