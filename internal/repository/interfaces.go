@@ -18,6 +18,7 @@ type UserRepository interface {
 	Search(ctx context.Context, query string, limit int) ([]model.UserSummary, error)
 	IncrementFollowerCount(ctx context.Context, tx *sqlx.Tx, userID int64, delta int) error
 	IncrementFollowingCount(ctx context.Context, tx *sqlx.Tx, userID int64, delta int) error
+	SetIsNewUser(ctx context.Context, userID int64, isNew bool) error
 }
 
 type RefreshTokenRepository interface {

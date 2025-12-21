@@ -143,3 +143,12 @@ func (r *userRepository) IncrementFollowingCount(ctx context.Context, tx *sqlx.T
 	}
 	return nil
 }
+
+func (r *userRepository) SetIsNewUser(ctx context.Context, userID int64, isNew bool) error {
+	query := `UPDATE users SET is_new_user = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.ExecContext(ctx, query, isNew, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update is_new_user: %w", err)
+	}
+	return nil
+}
