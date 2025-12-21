@@ -127,7 +127,7 @@ func (s *CommentService) Create(ctx context.Context, postID, userID int64, req m
 	return comment, nil
 }
 
-// Delete removes a comment. Uses transaction: delete comment + decrement counter.
+// Delete removes a comment and all its replies. Uses transaction: delete + decrement counter.
 func (s *CommentService) Delete(ctx context.Context, commentID, userID int64) error {
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -135,14 +135,14 @@ func (s *CommentService) Delete(ctx context.Context, commentID, userID int64) er
 	}
 	defer tx.Rollback()
 
-	// Delete comment (returns postID for counter update)
-	postID, err := s.commentRepo.Delete(ctx, tx, commentID, userID)
+	// Delete comment (returns postID and total deleted count including replies)
+	postID, deletedCount, err := s.commentRepo.Delete(ctx, tx, commentID, userID)
 	if err != nil {
 		return err
 	}
 
-	// Decrement comment count
-	if err := s.postRepo.IncrementCommentCount(ctx, tx, postID, -1); err != nil {
+	// Decrement comment count by total deleted (parent + replies)
+	if err := s.postRepo.IncrementCommentCount(ctx, tx, postID, -deletedCount); err != nil {
 		return err
 	}
 
@@ -150,7 +150,7 @@ func (s *CommentService) Delete(ctx context.Context, commentID, userID int64) er
 		return fmt.Errorf("commit transaction: %w", err)
 	}
 
-	log.Printf("[CommentService] User %d deleted comment %d from post %d", userID, commentID, postID)
+	log.Printf("[CommentService] User %d deleted comment %d (and %d total) from post %d", userID, commentID, deletedCount, postID)
 	return nil
 }
 

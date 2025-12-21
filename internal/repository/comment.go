@@ -60,38 +60,49 @@ func (r *commentRepository) Update(ctx context.Context, commentID, userID int64,
 	return &comment, nil
 }
 
-// Delete removes a comment. Returns the postID for counter decrement.
+// Delete removes a comment and all its replies (via ON DELETE CASCADE).
+// Returns the postID and the total count of deleted comments for counter decrement.
 // Only the comment owner can delete.
-func (r *commentRepository) Delete(ctx context.Context, tx *sqlx.Tx, commentID, userID int64) (int64, error) {
+func (r *commentRepository) Delete(ctx context.Context, tx *sqlx.Tx, commentID, userID int64) (postID int64, deletedCount int, err error) {
 	// First check ownership and get post_id
-	var postID int64
-	err := tx.GetContext(ctx, &postID, `
-		SELECT post_id FROM post_comments WHERE id = $1
+	var comment struct {
+		PostID int64 `db:"post_id"`
+		UserID int64 `db:"user_id"`
+	}
+	err = tx.GetContext(ctx, &comment, `
+		SELECT post_id, user_id FROM post_comments WHERE id = $1
 	`, commentID)
 	if err == sql.ErrNoRows {
-		return 0, model.ErrCommentNotFound
+		return 0, 0, model.ErrCommentNotFound
 	}
 	if err != nil {
-		return 0, fmt.Errorf("get comment: %w", err)
+		return 0, 0, fmt.Errorf("get comment: %w", err)
 	}
 
-	// Delete with ownership check
-	result, err := tx.ExecContext(ctx, `
-		DELETE FROM post_comments WHERE id = $1 AND user_id = $2
-	`, commentID, userID)
+	// Check ownership
+	if comment.UserID != userID {
+		return 0, 0, model.ErrNotCommentOwner
+	}
+
+	// Count how many comments will be deleted (this comment + all replies)
+	// This must be done BEFORE the delete since ON DELETE CASCADE will remove them
+	err = tx.GetContext(ctx, &deletedCount, `
+		SELECT COUNT(*) FROM post_comments 
+		WHERE id = $1 OR parent_comment_id = $1
+	`, commentID)
 	if err != nil {
-		return 0, fmt.Errorf("delete comment: %w", err)
+		return 0, 0, fmt.Errorf("count comments to delete: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
+	// Delete the comment (replies will be cascade-deleted by DB)
+	_, err = tx.ExecContext(ctx, `
+		DELETE FROM post_comments WHERE id = $1
+	`, commentID)
 	if err != nil {
-		return 0, fmt.Errorf("get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return 0, model.ErrNotCommentOwner
+		return 0, 0, fmt.Errorf("delete comment: %w", err)
 	}
 
-	return postID, nil
+	return comment.PostID, deletedCount, nil
 }
 
 // GetByPostID returns paginated comments for a post.

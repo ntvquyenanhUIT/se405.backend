@@ -327,8 +327,8 @@ Authorization: Bearer <access_token>
 - `404 NOT_FOUND`: comment không tồn tại
 
 #### Side effects
-- Delete from `post_comments`
-- `posts.comment_count = comment_count - 1` (trong cùng transaction)
+- Delete from `post_comments` (nếu là parent comment, tất cả replies cũng bị xóa via ON DELETE CASCADE)
+- `posts.comment_count` giảm đúng số lượng bị xóa (parent + replies)
 
 ---
 

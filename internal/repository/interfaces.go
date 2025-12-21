@@ -64,7 +64,7 @@ type PostRepository interface {
 type CommentRepository interface {
 	Create(ctx context.Context, tx *sqlx.Tx, postID, userID int64, content string, parentID *int64) (*model.Comment, error)
 	Update(ctx context.Context, commentID, userID int64, content string) (*model.Comment, error)
-	Delete(ctx context.Context, tx *sqlx.Tx, commentID, userID int64) (postID int64, err error)
+	Delete(ctx context.Context, tx *sqlx.Tx, commentID, userID int64) (postID int64, deletedCount int, err error)
 	GetByPostID(ctx context.Context, postID int64, cursor *string, limit int) ([]model.Comment, *string, error)
 	GetByID(ctx context.Context, commentID int64) (*model.Comment, error)
 }
