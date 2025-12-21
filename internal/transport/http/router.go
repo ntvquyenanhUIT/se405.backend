@@ -62,6 +62,7 @@ func NewRouter(cfg RouterConfig) chi.Router {
 
 		// Current user endpoints
 		r.Get("/me", cfg.AuthHandler.Me)
+		r.Patch("/me/onboarding", cfg.UserHandler.CompleteOnboarding)
 
 		// Auth actions that require authentication
 		r.Post("/auth/logout", cfg.AuthHandler.Logout)

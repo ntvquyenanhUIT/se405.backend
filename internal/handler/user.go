@@ -84,3 +84,24 @@ func (h *UserHandler) Search(w http.ResponseWriter, r *http.Request) {
 		"users": users,
 	})
 }
+
+// CompleteOnboarding handles the request to mark a user as having completed onboarding.
+// PATCH /users/me/onboarding
+func (h *UserHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteUnauthorized(w, "Not authenticated")
+		return
+	}
+
+	if err := h.userService.CompleteOnboarding(r.Context(), userID); err != nil {
+		// TODO: Replace with proper logger (slog/zap) in production
+		log.Printf("[ERROR] CompleteOnboarding handler: %v", err)
+		httputil.WriteInternalError(w, "Failed to complete onboarding")
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{
+		"message": "Onboarding completed successfully",
+	})
+}

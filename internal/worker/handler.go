@@ -271,7 +271,6 @@ func (h *Handler) handlePostCommented(ctx context.Context, event queue.FeedEvent
 		return nil
 	}
 
-	// Don't notify if commenting on own post
 	if event.ActorID == event.RecipientID {
 		return nil
 	}

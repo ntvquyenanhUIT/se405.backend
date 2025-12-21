@@ -87,7 +87,6 @@ func (c *RedisConsumer) Read(ctx context.Context, stream, group, consumer string
 
 	if err == redis.Nil {
 		// Timeout - no new messages
-		log.Printf("[Consumer] Read: stream=%s group=%s consumer=%s timeout (no messages)", stream, group, consumer)
 		return nil, nil
 	}
 	if err != nil {

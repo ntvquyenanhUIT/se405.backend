@@ -89,20 +89,18 @@ func (s *UserService) Login(ctx context.Context, req *model.LoginRequest) (*mode
 	if err != nil {
 		return nil, model.ErrInvalidCredentials
 	}
-
-	// If this is the user's first login (after completing onboarding), mark them as no longer new
-	if user.IsNewUser {
-		if err := s.repo.SetIsNewUser(ctx, user.ID, false); err != nil {
-			// Log error but don't fail login - this is non-critical
-			// TODO: Replace with proper logger (slog/zap) in production
-			// For now, we silently continue
-		} else {
-			// Update the user object to reflect the change
-			user.IsNewUser = false
-		}
-	}
 	
 	return user, nil
+}
+
+// CompleteOnboarding marks the user as having completed the onboarding process.
+func (s *UserService) CompleteOnboarding(ctx context.Context, userID int64) error {
+	// We could add validation here (e.g., check if user follows > 0 people),
+	// but for now we trust the client's signal.
+	if err := s.repo.SetIsNewUser(ctx, userID, false); err != nil {
+		return fmt.Errorf("failed to complete onboarding: %w", err)
+	}
+	return nil
 }
 
 // GetByID retrieves a user by ID.

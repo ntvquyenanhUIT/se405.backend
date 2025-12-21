@@ -166,7 +166,7 @@ func (s *NotificationService) sendPushNotification(ctx context.Context, userID, 
 	if postID != nil {
 		data["post_id"] = *postID
 	}
-
+	
 	// Send push notification via Expo
 	if err := s.expoPush.SendToTokens(tokenStrings, title, body, data); err != nil {
 		log.Printf("[NotificationService] Failed to send push to user %d: %v", userID, err)
